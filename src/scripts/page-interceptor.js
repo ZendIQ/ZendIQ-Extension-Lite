@@ -516,7 +516,7 @@
 
       // Returns the bot-creator factor if present in the score, else null.
       function _botFactor(sc) {
-        return (sc?.factors ?? []).find(f => f.name && f.name.toLowerCase().includes('bot-created')) ?? null;
+        return (sc?.factors ?? []).find(f => f.name && /bot(-created token|factory)/i.test(f.name)) ?? null;
       }
 
       function _buildBotBanner(f) {

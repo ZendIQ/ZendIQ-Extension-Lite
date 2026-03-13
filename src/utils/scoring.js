@@ -514,30 +514,40 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
 
   // ── 14. Serial deployer check ─────────────────────────────────────────────
   // deployerData: { address: string, tokenCount: number } | null
-  // A wallet that has launched many tokens in the last 30 days is a strong
-  // indicator of a bot-operated rug factory.
+  // Tiers calibrated against real pump.fun bot behaviour:
+  //   ≥50 = scripted factory (token every ~14h)
+  //   ≥25 = near-automated (token every ~1.2d — physically implausible manually)
+  //   ≥10 = systematic serial rugger (semi-manual with templates)
+  //   ≥3  = repeat experimenter / early-stage bad actor
   if (deployerData?.address) {
     const tc = deployerData.tokenCount ?? 0;
-    if (tc >= 10) {
+    if (tc >= 50) {
       score += 35;
+      factors.push({
+        name: `Bot factory — ${tc} deploys in 30d`,
+        severity: 'CRITICAL',
+        detail: `Creator wallet launched ${tc} tokens in 30 days (~1 every 14h). This is a scripted bot factory. Near-certain rug.`,
+      });
+    } else if (tc >= 25) {
+      score += 30;
       factors.push({
         name: `Bot-created token — ${tc} deploys in 30d`,
         severity: 'CRITICAL',
-        detail: `Creator wallet launched ${tc} tokens in the last 30 days — automated rug factory behaviour. Extremely high probability of total loss.`,
+        detail: `Creator wallet launched ${tc} tokens in 30 days — physically implausible without automation. Automated rug pipeline.`,
       });
-    } else if (tc >= 4) {
+    } else if (tc >= 10) {
       score += 20;
       factors.push({
         name: `Serial launcher — ${tc} tokens in 30d`,
         severity: 'HIGH',
-        detail: `Creator wallet has launched ${tc} tokens recently. Rapid serial launches are a common rug-pull pattern.`,
+        detail: `Creator wallet has launched ${tc} tokens in 30 days. Systematic serial launches are a strong rug-pull indicator.`,
       });
-    } else if (tc >= 2) {
+    } else if (tc >= 3) {
       score += 8;
       factors.push({
         name: `Repeat creator — ${tc} tokens in 30d`,
         severity: 'MEDIUM',
-        detail: `Creator has launched ${tc} tokens in the last 30 days. Monitor carefully — may be exploratory or adversarial.`,
+        detail: `Creator has launched ${tc} tokens in the last 30 days. May be an experimenter or early-stage bad actor — monitor carefully.`,
       });
     } else {
       factors.push({

@@ -439,7 +439,10 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
   }
 
   // ── 10. Token age ─────────────────────────────────────────────────────────
-  if (dexData?.pairCreatedAt) {
+  // Suppressed on pump.fun — every token there is <24h old by design;
+  // the site-context CRITICAL factor (§5) already captures that risk fully.
+  const _isPumpFunSite = typeof location !== 'undefined' && location.hostname?.includes('pump.fun');
+  if (dexData?.pairCreatedAt && !_isPumpFunSite) {
     const ageMs   = Date.now() - dexData.pairCreatedAt;
     const ageDays = ageMs / (1000 * 60 * 60 * 24);
     if (ageDays < 1) {

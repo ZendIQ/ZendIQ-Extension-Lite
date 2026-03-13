@@ -1,0 +1,86 @@
+{
+  "manifest_version": 3,
+  "name": "ZendIQ Lite",
+  "version": "0.1.0",
+  "description": "Free Solana swap guardian. Scans token risk and warns you before you sign on Jupiter, Raydium, and Pump.fun. Includes wallet security checker.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://api.rugcheck.xyz/*",
+    "https://api.dexscreener.com/*",
+    "https://api.geckoterminal.com/*",
+    "https://api.mainnet-beta.solana.com/*",
+    "https://solana.publicnode.com/*",
+    "*://jup.ag/*",
+    "*://*.jup.ag/*",
+    "*://raydium.io/*",
+    "*://*.raydium.io/*",
+    "*://pump.fun/*",
+    "*://*.pump.fun/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://jup.ag/*",
+        "*://*.jup.ag/*",
+        "*://raydium.io/*",
+        "*://*.raydium.io/*",
+        "*://pump.fun/*",
+        "*://*.pump.fun/*"
+      ],
+      "js": [
+        "src/scripts/page-config.js",
+        "src/utils/scoring.js",
+        "src/scripts/page-interceptor.js",
+        "src/scripts/page-wallet.js",
+        "src/scripts/page-security.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "*://jup.ag/*",
+        "*://*.jup.ag/*",
+        "*://raydium.io/*",
+        "*://*.raydium.io/*",
+        "*://pump.fun/*",
+        "*://*.pump.fun/*"
+      ],
+      "js": ["src/scripts/bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "action": {
+    "default_popup": "src/ui/popup.html",
+    "default_icon": {
+      "16": "assets/icon-16.png",
+      "48": "assets/icon-48.png",
+      "128": "assets/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "icons": {
+    "16": "assets/icon-16.png",
+    "48": "assets/icon-48.png",
+    "128": "assets/icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/icon-48.png"],
+      "matches": [
+        "*://*.jup.ag/*",
+        "*://*.raydium.io/*",
+        "*://pump.fun/*",
+        "*://*.pump.fun/*"
+      ]
+    }
+  ]
+}

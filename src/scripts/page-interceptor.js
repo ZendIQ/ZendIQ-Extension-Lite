@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ZendIQ Lite — page-interceptor.js
  * Runs in MAIN world at document_start.
  *
@@ -236,19 +236,30 @@
   let _probedMint = null;
   // Track the in-flight tokenScore promise per mint so the click/sign handlers
   // can reuse it rather than starting a competing new fetch.
-  const _scoreInFlight = new Map(); // mint → Promise<result|null>
+  const _scoreInFlight = new Map(); // mint → Promise<fullResult>
+  const _baseInFlight  = new Map(); // mint → Promise<partialResult> (resolves after 5 APIs, before deployer)
 
   function _probeScore(mint) {
     if (!mint || mint === _probedMint) return;
     _probedMint = mint;
     _ensureScoring();
     if (typeof fetchTokenScore !== 'function') return;
-    const p = fetchTokenScore(mint).then(result => {
+    let _resolveBase;
+    const baseP = new Promise(res => { _resolveBase = res; });
+    _baseInFlight.set(mint, baseP);
+    const p = fetchTokenScore(mint, undefined, { onBase: _resolveBase }).then(result => {
       ns.lastTokenScore = result;
       _scoreInFlight.delete(mint);
+      _baseInFlight.delete(mint);
+      _resolveBase(result); // fallback — ensures baseP resolves even if onBase wasn't called
       if (result) window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result, ts: Date.now(), site: location.hostname } }, '*');
       return result;
-    }).catch(() => { _scoreInFlight.delete(mint); return null; });
+    }).catch(() => {
+      _scoreInFlight.delete(mint);
+      _baseInFlight.delete(mint);
+      _resolveBase(null);
+      return null;
+    });
     _scoreInFlight.set(mint, p);
   }
 
@@ -296,10 +307,15 @@
     // otherwise start a fresh fetch. An 18s safety timeout prevents the overlay
     // hanging if all bridge calls fail.
     let _scorePromise = null;
+    let _fullPromise  = null;
     if (!score && mint) {
       _ensureScoring();
-      if (_scoreInFlight.has(mint)) {
-        // Proactive fetch already in progress — reuse it directly
+      if (_baseInFlight.has(mint)) {
+        // Two-phase: partial factors appear fast (~1s), deployer row added when full result arrives
+        _scorePromise = Promise.race([_baseInFlight.get(mint),  new Promise(r => setTimeout(() => r(null), 8000))]);
+        _fullPromise  = Promise.race([_scoreInFlight.get(mint), new Promise(r => setTimeout(() => r(null), 18000))]);
+      } else if (_scoreInFlight.has(mint)) {
+        // Already past base phase — reuse full promise directly
         _scorePromise = Promise.race([
           _scoreInFlight.get(mint),
           new Promise(r => setTimeout(() => r(null), 18000)),
@@ -330,7 +346,7 @@
 
     let decision;
     try {
-      decision = await _showOverlay(score, _scorePromise);
+      decision = await _showOverlay(score, _scorePromise, _fullPromise);
     } catch (_) {
       decision = 'proceed'; // fail open
     }
@@ -369,9 +385,14 @@
     // If score not yet cached: reuse the proactive in-flight promise if available,
     // otherwise start a fresh fetch. 18s safety timeout.
     let _scorePromise = null;
+    let _fullPromise  = null;
     if (!score && mint) {
       _ensureScoring();
-      if (_scoreInFlight.has(mint)) {
+      if (_baseInFlight.has(mint)) {
+        // Two-phase: partial factors appear fast (~1s), deployer row added when full result arrives
+        _scorePromise = Promise.race([_baseInFlight.get(mint),  new Promise(r => setTimeout(() => r(null), 8000))]);
+        _fullPromise  = Promise.race([_scoreInFlight.get(mint), new Promise(r => setTimeout(() => r(null), 18000))]);
+      } else if (_scoreInFlight.has(mint)) {
         _scorePromise = Promise.race([
           _scoreInFlight.get(mint),
           new Promise(r => setTimeout(() => r(null), 18000)),
@@ -406,7 +427,7 @@
     const isRisky   = score != null && score.score >= threshold;
 
     // Overlay always requires manual confirmation — no auto-proceed.
-    const decision = await _showOverlay(score, _scorePromise);
+    const decision = await _showOverlay(score, _scorePromise, _fullPromise);
 
     const _finalScore = (mint && ns.lastTokenScore?.mint === mint) ? ns.lastTokenScore : score;
     _addToHistory({
@@ -462,6 +483,11 @@
 .__zq_cancel{background:rgba(255,255,255,.08);color:#E8E8F0}
 .__zq_proceed{background:#14F195;color:#0F0F1B}.__zq_proceed.amber{background:#FFB547;color:#0F0F1B}.__zq_proceed.orange{background:#FF6B00;color:#fff}.__zq_proceed.red{background:#FF4444;color:#fff}
 .__zq_nt{text-align:center;font-size:9.5px;color:#3A3A5A;padding:0 18px 12px}
+.__zq_ld{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;
+  background:rgba(255,255,255,.03);font-size:10.5px;color:#6B6B8A}
+.__zq_spin{width:10px;height:10px;border:1.5px solid rgba(255,255,255,.12);
+  border-top-color:#9945FF;border-radius:50%;animation:__zq_spin .7s linear infinite;flex-shrink:0}
+@keyframes __zq_spin{to{transform:rotate(360deg)}}
 .__zq_bot{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;
   background:rgba(255,68,68,.13);border:1px solid rgba(255,68,68,.45);
   animation:__zq_pulse 1.6s ease-in-out infinite;cursor:help}
@@ -490,7 +516,7 @@
 
   // Always requires manual confirmation — no auto-proceed.
   // scorePromise: optional live fetch; overlay updates its DOM when it resolves.
-  function _showOverlay(score, scorePromise) {
+  function _showOverlay(score, scorePromise, fullPromise) {
     return new Promise((resolve) => {
       _injectCSS();
 
@@ -511,7 +537,7 @@
       }
 
       let _tipTexts = [];
-      const SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      const SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, LOADING: 10 };
       const SEV_PILL  = { LOW: 'LOW', MEDIUM: 'MOD', HIGH: 'HIGH', CRITICAL: 'CRIT' };
 
       // Returns the bot-creator factor if present in the score, else null.
@@ -525,7 +551,7 @@
           <span class="__zq_bot_icon">🤖</span>
           <div class="__zq_bot_text">
             <span class="__zq_bot_title">BOT-CREATED TOKEN</span>
-            <span class="__zq_bot_sub">${_esc(f.name.replace(/^bot-created token\s*—?\s*/i, ''))}</span>
+            <span class="__zq_bot_sub">${_esc(f.name.replace(/^bot(-created token|factory)\s*—?\s*/i, ''))}</span>
           </div>
           <span class="__zq_bot_pill">CRIT</span>
         </div>`;
@@ -533,16 +559,20 @@
 
       function _buildFactors(sc) {
         const botF = _botFactor(sc);
-        // Sort CRIT→HIGH→MEDIUM→LOW; exclude the bot factor (shown in banner)
+        // Sort CRIT→HIGH→MEDIUM→LOW→LOADING; exclude bot factor (shown in banner)
         const sorted = (sc?.factors ?? [])
           .filter(f => f !== botF)
           .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9))
           .slice(0, 10);
         _tipTexts = sorted.map(f => {
+          if (f.severity === 'LOADING') return null;
           const sevLabel = f.severity === 'LOW' ? 'Low risk' : f.severity === 'MEDIUM' ? 'Moderate risk' : f.severity === 'HIGH' ? 'High risk' : 'Critical risk';
           return `${sevLabel}\n${f.detail ?? f.name}`;
         });
         return sorted.map((f, i) => {
+          if (f.severity === 'LOADING') {
+            return `<div class="__zq_ld"><div class="__zq_spin"></div><span style="flex:1">${_esc(f.name)}</span></div>`;
+          }
           const fc   = SEV_COLOR[f.severity] ?? '#E8E8F0';
           const icon = f.severity === 'LOW' ? '✓' : '⚠';
           const pill = SEV_PILL[f.severity] ?? f.severity;
@@ -582,7 +612,7 @@
               <span class="__zq_sn" id="__zq_num" style="color:${col}">${num}</span>
               <span class="__zq_sp" id="__zq_badge" style="color:${col};border-color:${col}40">${label} · ${num}/100</span>
             </div>
-            <div class="__zq_fl" id="__zq_fl0">${_buildFactors(score)}</div>
+            <div class="__zq_fl" id="__zq_fl0">${scanPending ? '<div class="__zq_ld"><div class="__zq_spin"></div><span>Fetching on-chain data…</span></div>' : _buildFactors(score)}</div>
           </div>
           <div class="__zq_ai" id="__zq_ai0">
             <button class="__zq_btn __zq_cancel" id="__zq_cancel">✕ Cancel Swap</button>
@@ -657,29 +687,79 @@
           const flEl = backdrop.querySelector('#__zq_fl0');
           if (flEl) { flEl.innerHTML = _buildFactors(freshScore ?? null); _wireTips(flEl); }
 
-          // Add Proceed button (was absent while scanning)
-          const aiEl = backdrop.querySelector('#__zq_ai0');
-          if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
-            const pCls2 = _proceedClass(freshScore);
-            const pLbl2 = _proceedLabel(freshScore);
-            const btn2 = document.createElement('button');
-            btn2.className = `__zq_btn __zq_proceed ${pCls2}`;
-            btn2.id = '__zq_proceed';
-            btn2.textContent = pLbl2;
-            btn2.onclick = () => done('proceed');
-            aiEl.appendChild(btn2);
+          // Add Proceed only when this is the final result (fullPromise not pending)
+          if (!fullPromise || !freshScore?._deployerPending) {
+            const aiEl = backdrop.querySelector('#__zq_ai0');
+            if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
+              const pCls2 = _proceedClass(freshScore);
+              const pLbl2 = _proceedLabel(freshScore);
+              const btn2 = document.createElement('button');
+              btn2.className = `__zq_btn __zq_proceed ${pCls2}`;
+              btn2.id = '__zq_proceed';
+              btn2.textContent = pLbl2;
+              btn2.onclick = () => done('proceed');
+              aiEl.appendChild(btn2);
+            }
           }
         }).catch(() => {
-          // Timed out or failed — add a generic Proceed button so user isn’t stuck
+          // Timed out or failed — only add Proceed if fullPromise won’t
+          if (!fullPromise) {
+            if (!backdrop.isConnected) return;
+            const aiEl = backdrop.querySelector('#__zq_ai0');
+            if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
+              const btn2 = document.createElement('button');
+              btn2.className = '__zq_btn __zq_proceed';
+              btn2.id = '__zq_proceed';
+              btn2.textContent = 'Proceed Anyway →';
+              btn2.onclick = () => done('proceed');
+              aiEl.appendChild(btn2);
+            }
+          }
+        });
+      }
+
+      // Phase 2: deployer result arrives — replace spinner, update score, add Proceed
+      if (fullPromise) {
+        fullPromise.then(finalScore => {
           if (!backdrop.isConnected) return;
-          const aiEl = backdrop.querySelector('#__zq_ai0');
-          if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
-            const btn2 = document.createElement('button');
-            btn2.className = '__zq_btn __zq_proceed';
-            btn2.id = '__zq_proceed';
-            btn2.textContent = 'Proceed Anyway →';
-            btn2.onclick = () => done('proceed');
-            aiEl.appendChild(btn2);
+          const lvlF  = finalScore?.level ?? 'UNKNOWN';
+          const colF  = LEVEL_COLOR[lvlF] ?? '#6B6B8A';
+          const lblF  = LEVEL_LABEL[lvlF] ?? 'Unknown';
+          const numF  = finalScore?.score != null ? finalScore.score : '?';
+          const snEl2 = backdrop.querySelector('#__zq_num');
+          const spEl2 = backdrop.querySelector('#__zq_badge');
+          if (snEl2) { snEl2.textContent = numF; snEl2.style.color = colF; }
+          if (spEl2) { spEl2.textContent = lblF + ' · ' + numF + '/100'; spEl2.style.color = colF; spEl2.style.borderColor = colF + '40'; }
+          const newBotF = _botFactor(finalScore ?? null);
+          const botElF  = backdrop.querySelector('#__zq_bot0');
+          const bodyElF = backdrop.querySelector('.__zq_body');
+          if (newBotF && !botElF && bodyElF) {
+            bodyElF.insertAdjacentHTML('afterbegin', _buildBotBanner(newBotF));
+          }
+          const flElF = backdrop.querySelector('#__zq_fl0');
+          if (flElF) { flElF.innerHTML = _buildFactors(finalScore ?? null); _wireTips(flElF); }
+          const aiElF = backdrop.querySelector('#__zq_ai0');
+          if (aiElF && !aiElF.querySelector('#__zq_proceed')) {
+            const pClsF = _proceedClass(finalScore);
+            const pLblF = _proceedLabel(finalScore);
+            const btnF  = document.createElement('button');
+            btnF.className = `__zq_btn __zq_proceed ${pClsF}`;
+            btnF.id = '__zq_proceed';
+            btnF.textContent = pLblF;
+            btnF.onclick = () => done('proceed');
+            aiElF.appendChild(btnF);
+          }
+        }).catch(() => {
+          // Deployer lookup failed — add fallback Proceed so user isn’t blocked
+          if (!backdrop.isConnected) return;
+          const aiElF = backdrop.querySelector('#__zq_ai0');
+          if (aiElF && !aiElF.querySelector('#__zq_proceed')) {
+            const btnF = document.createElement('button');
+            btnF.className = '__zq_btn __zq_proceed';
+            btnF.id = '__zq_proceed';
+            btnF.textContent = 'Proceed Anyway →';
+            btnF.onclick = () => done('proceed');
+            aiElF.appendChild(btnF);
           }
         });
       }

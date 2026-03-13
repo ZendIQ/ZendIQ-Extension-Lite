@@ -462,6 +462,15 @@
 .__zq_cancel{background:rgba(255,255,255,.08);color:#E8E8F0}
 .__zq_proceed{background:#14F195;color:#0F0F1B}.__zq_proceed.amber{background:#FFB547;color:#0F0F1B}.__zq_proceed.orange{background:#FF6B00;color:#fff}.__zq_proceed.red{background:#FF4444;color:#fff}
 .__zq_nt{text-align:center;font-size:9.5px;color:#3A3A5A;padding:0 18px 12px}
+.__zq_bot{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;
+  background:rgba(255,68,68,.13);border:1px solid rgba(255,68,68,.45);
+  animation:__zq_pulse 1.6s ease-in-out infinite;cursor:help}
+@keyframes __zq_pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,68,68,.0)}50%{box-shadow:0 0 0 5px rgba(255,68,68,.18)}}
+.__zq_bot_icon{font-size:22px;flex-shrink:0;line-height:1}
+.__zq_bot_text{flex:1;display:flex;flex-direction:column;gap:2px}
+.__zq_bot_title{font-size:11px;font-weight:900;color:#FF4444;letter-spacing:.6px}
+.__zq_bot_sub{font-size:10px;color:#E8E8F0;opacity:.8}
+.__zq_bot_pill{font-size:9px;font-weight:800;color:#FF4444;border:1px solid rgba(255,68,68,.5);border-radius:4px;padding:2px 6px;flex-shrink:0;letter-spacing:.4px}
 #__zq_tip{position:fixed;z-index:2147483648;pointer-events:none;
   background:#1A1A2E;border:1px solid rgba(255,255,255,.15);border-radius:8px;
   padding:8px 11px;max-width:260px;font-size:11px;line-height:1.5;color:#C8C8E0;
@@ -502,15 +511,38 @@
       }
 
       let _tipTexts = [];
-      const SEV_PILL = { LOW: 'LOW', MEDIUM: 'MOD', HIGH: 'HIGH', CRITICAL: 'CRIT' };
+      const SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      const SEV_PILL  = { LOW: 'LOW', MEDIUM: 'MOD', HIGH: 'HIGH', CRITICAL: 'CRIT' };
+
+      // Returns the bot-creator factor if present in the score, else null.
+      function _botFactor(sc) {
+        return (sc?.factors ?? []).find(f => f.name && f.name.toLowerCase().includes('bot-created')) ?? null;
+      }
+
+      function _buildBotBanner(f) {
+        if (!f) return '';
+        return `<div class="__zq_bot" id="__zq_bot0" title="${_escA(f.detail)}">
+          <span class="__zq_bot_icon">🤖</span>
+          <div class="__zq_bot_text">
+            <span class="__zq_bot_title">BOT-CREATED TOKEN</span>
+            <span class="__zq_bot_sub">${_esc(f.name.replace(/^bot-created token\s*—?\s*/i, ''))}</span>
+          </div>
+          <span class="__zq_bot_pill">CRIT</span>
+        </div>`;
+      }
 
       function _buildFactors(sc) {
-        const factors = (sc?.factors ?? []).slice(0, 7);
-        _tipTexts = factors.map(f => {
+        const botF = _botFactor(sc);
+        // Sort CRIT→HIGH→MEDIUM→LOW; exclude the bot factor (shown in banner)
+        const sorted = (sc?.factors ?? [])
+          .filter(f => f !== botF)
+          .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9))
+          .slice(0, 10);
+        _tipTexts = sorted.map(f => {
           const sevLabel = f.severity === 'LOW' ? 'Low risk' : f.severity === 'MEDIUM' ? 'Moderate risk' : f.severity === 'HIGH' ? 'High risk' : 'Critical risk';
           return `${sevLabel}\n${f.detail ?? f.name}`;
         });
-        return factors.map((f, i) => {
+        return sorted.map((f, i) => {
           const fc   = SEV_COLOR[f.severity] ?? '#E8E8F0';
           const icon = f.severity === 'LOW' ? '✓' : '⚠';
           const pill = SEV_PILL[f.severity] ?? f.severity;
@@ -529,6 +561,7 @@
       const num   = score?.score != null ? score.score : '?';
       const pCls  = _proceedClass(score);
       const pLbl  = _proceedLabel(score);
+      const _botF = _botFactor(score);
 
       const backdrop = document.createElement('div');
       backdrop.id = '__zqlite_bd';
@@ -544,7 +577,8 @@
             <span class="__zq_ht">ZendIQ Lite · Token Risk Check</span>
           </div>
           <div class="__zq_body">
-            <div class="__zq_sr">
+            ${_buildBotBanner(_botF)}
+            <div class="__zq_sr" style="${_botF ? 'margin-top:10px' : ''}">
               <span class="__zq_sn" id="__zq_num" style="color:${col}">${num}</span>
               <span class="__zq_sp" id="__zq_badge" style="color:${col};border-color:${col}40">${label} · ${num}/100</span>
             </div>
@@ -613,7 +647,13 @@
           if (snEl) { snEl.textContent = num2; snEl.style.color = col2; }
           if (spEl) { spEl.textContent = `${label2} · ${num2}/100`; spEl.style.color = col2; spEl.style.borderColor = col2 + '40'; }
 
-          // Rebuild factors with live tooltips
+          // Rebuild bot banner + factors with live tooltips
+          const newBot = _botFactor(freshScore ?? null);
+          const botEl  = backdrop.querySelector('#__zq_bot0');
+          const bodyEl = backdrop.querySelector('.__zq_body');
+          if (newBot && !botEl && bodyEl) {
+            bodyEl.insertAdjacentHTML('afterbegin', _buildBotBanner(newBot));
+          }
           const flEl = backdrop.querySelector('#__zq_fl0');
           if (flEl) { flEl.innerHTML = _buildFactors(freshScore ?? null); _wireTips(flEl); }
 

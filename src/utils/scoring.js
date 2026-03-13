@@ -554,9 +554,11 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
       });
     } else {
       factors.push({
-        name: `New creator wallet`,
+        name: tc === 0 ? `Creator: first token ever` : `Creator: ${tc} token${tc === 1 ? '' : 's'} in 30d`,
         severity: 'LOW',
-        detail: `No serial-launch pattern detected for this deployer wallet in the last 30 days.`,
+        detail: tc === 0
+          ? `No previous tokens found for this deployer wallet. Could be a brand-new creator.`
+          : `Creator has launched ${tc} token${tc === 1 ? '' : 's'} in the last 30 days — no serial-launch pattern detected.`,
       });
     }
   }

@@ -221,7 +221,31 @@ async function _fetchRugCheck(mint) {
     return data;
   } catch (_) { return null; }
 }
-
+// ── Deployer rug-rate check via DexScreener batch ───────────────────────────────
+// Given a list of mint addresses (deployer's previous tokens), fetch DexScreener in
+// a single batch call and classify each as "rugged" (no Solana pairs, or max liquidity
+// < $200) vs alive. Returns { checked, ruggedCount } or null on failure.
+async function _fetchDeployerRugRate(mints) {
+  if (!mints?.length) return null;
+  const sample = mints.slice(0, 10); // cap to stay well within rate limits
+  try {
+    const data = await _jsonFetch(`https://api.dexscreener.com/latest/dex/tokens/${sample.join(',')}`);
+    const liquidByMint = new Map();
+    for (const p of (data?.pairs ?? [])) {
+      if (p.chainId !== 'solana') continue;
+      const addr = p.baseToken?.address;
+      if (!addr) continue;
+      const liq = p.liquidity?.usd ?? 0;
+      if (!liquidByMint.has(addr) || liq > liquidByMint.get(addr)) liquidByMint.set(addr, liq);
+    }
+    let ruggedCount = 0;
+    for (const m of sample) {
+      const maxLiq = liquidByMint.get(m) ?? null;
+      if (maxLiq === null || maxLiq < 200) ruggedCount++;
+    }
+    return { checked: sample.length, ruggedCount };
+  } catch (_) { return null; }
+}
 // ── Score calculator ──────────────────────────────────────────────────────────
 // RugCheck risk item names with near-zero signal on legitimate tokens — filtered out
 const RUGCHECK_NOISE = [
@@ -230,7 +254,7 @@ const RUGCHECK_NOISE = [
   'metadata',
 ];
 
-function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData) {
+function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData) {
   let score = 0;
   const factors = [];
 
@@ -563,6 +587,42 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
     }
   }
 
+  // ── 15. Deployer rug history ─────────────────────────────────────────────────────
+  // How many of the deployer’s sampled previous tokens have gone to near-zero liquidity?
+  // Only scored when we’ve checked at least 3 mints to avoid false positives.
+  if (rugRateData?.checked >= 3) {
+    const { checked, ruggedCount } = rugRateData;
+    const rugPct = Math.round((ruggedCount / checked) * 100);
+    if (rugPct >= 80) {
+      score += 20;
+      factors.push({
+        name: `${ruggedCount}/${checked} prev tokens went to zero`,
+        severity: 'CRITICAL',
+        detail: `${rugPct}% of this creator’s sampled previous tokens have collapsed to near-zero liquidity. Consistent rug-pull pattern confirmed.`,
+      });
+    } else if (rugPct >= 60) {
+      score += 15;
+      factors.push({
+        name: `${ruggedCount}/${checked} prev tokens went to zero`,
+        severity: 'HIGH',
+        detail: `${rugPct}% of sampled previous tokens from this creator have near-zero liquidity. Strong rug-pull pattern.`,
+      });
+    } else if (rugPct >= 40) {
+      score += 8;
+      factors.push({
+        name: `${ruggedCount}/${checked} prev tokens: most failed`,
+        severity: 'MEDIUM',
+        detail: `${rugPct}% of sampled previous tokens from this creator have low or no liquidity.`,
+      });
+    } else {
+      factors.push({
+        name: `${ruggedCount}/${checked} prev tokens: some losses`,
+        severity: 'LOW',
+        detail: `${rugPct}% of sampled previous tokens have low liquidity — within normal range for speculative launches.`,
+      });
+    }
+  }
+
   // ── Fallback: no data available ───────────────────────────────────────────
   if (!mintInfo && !holderData && !rugCheck && !dexData && !geckoData) {
     score += 15;
@@ -591,7 +651,7 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
  * Result shape:
  *   { mint, score, level, factors, loaded, error, dataSource }
  */
-async function fetchTokenScore(mint, symbol) {
+async function fetchTokenScore(mint, symbol, { onBase } = {}) {
   if (!_rpcCall || !_jsonFetch) {
     throw new Error('ZendIQ Lite scoring: call initScoring({ rpcCall, jsonFetch }) first');
   }
@@ -624,23 +684,44 @@ async function fetchTokenScore(mint, symbol) {
       _fetchGeckoTerminal(mint).catch(() => null),
     ]);
 
+    // Phase 1: partial result — notify caller immediately so the overlay can show factors
+    // without waiting for the slow deployer RPC lookup (~5-10s).
+    if (typeof onBase === 'function') {
+      const _partial = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, null, null);
+      _partial.factors.push({ name: 'Creator history — scanning on-chain…', severity: 'LOADING', detail: 'Checking how many tokens this wallet has deployed and how many went to zero.' });
+      _partial._deployerPending = true;
+      onBase(_partial);
+    }
+
     // Deployer lookup — runs after mint data so we can use the real deployer address.
-    // getRealDeployer + getDeployerTokenCount are defined in extraction.js (MAIN world)
+    // getRealDeployer + getDeployerTokenData are defined in extraction.js (MAIN world)
     // or stubbed to null in popup context where extraction.js is not loaded.
     let deployerData = null;
+    let rugRateData  = null;
     try {
       if (typeof getRealDeployer === 'function') {
         const address = await getRealDeployer(mint);
         if (address) {
-          const tokenCount = typeof getDeployerTokenCount === 'function'
-            ? await getDeployerTokenCount(address, 30)
-            : 0;
+          let tokenCount = 0;
+          let mints      = [];
+          if (typeof getDeployerTokenData === 'function') {
+            const td  = await getDeployerTokenData(address, 30);
+            tokenCount = td.tokenCount;
+            mints      = td.mints;
+          } else if (typeof getDeployerTokenCount === 'function') {
+            tokenCount = await getDeployerTokenCount(address, 30);
+          }
           deployerData = { address, tokenCount };
+          // Rug-rate check: batch DexScreener call for a sample of deployer’s previous mints.
+          // Runs after mint extraction since we need the addresses, not just the count.
+          if (mints.length >= 3) {
+            rugRateData = await _fetchDeployerRugRate(mints);
+          }
         }
       }
     } catch (_) { /* deployer lookup is best-effort */ }
 
-    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData);
+    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData);
     _setCached(mint, result);
     return result;
   } catch (err) {

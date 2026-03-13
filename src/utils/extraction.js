@@ -85,57 +85,67 @@ async function getRealDeployer(mint) {
 }
 
 /**
- * Counts how many tokens the deployer has launched in the last `windowDays` days.
- * Scans up to 200 recent transactions of the deployer wallet and counts those
- * that include a SPL Token or Token-2022 program instruction (InitializeMint).
- * Returns 0 on any failure so callers can safely use the result in comparisons.
+ * Returns the distinct mint addresses deployed by this wallet in the last `windowDays` days,
+ * plus the total count. Uses jsonParsed encoding to extract `initializeMint` instructions
+ * directly — avoids the imprecise proxy-key heuristic used previously.
+ *
+ * Returns { tokenCount: number, mints: string[] }.
+ * Falls back to tokenCount=0, mints=[] on any error.
  */
-async function getDeployerTokenCount(deployerAddress, windowDays = 30) {
-  if (!deployerAddress || typeof deployerAddress !== 'string') return 0;
+async function getDeployerTokenData(deployerAddress, windowDays = 30) {
+  if (!deployerAddress || typeof deployerAddress !== 'string') return { tokenCount: 0, mints: [] };
   try {
     const cutoff = Math.floor((Date.now() - windowDays * 24 * 3600 * 1000) / 1000);
-    const resp = await rpcCall('getSignaturesForAddress', [
-      deployerAddress,
-      { limit: 200 },
-    ]);
-    const sigs = resp?.result ?? [];
+    const resp = await rpcCall('getSignaturesForAddress', [deployerAddress, { limit: 200 }]);
+    const recent = (resp?.result ?? []).filter(s => (s.blockTime ?? 0) >= cutoff);
+    if (!recent.length) return { tokenCount: 0, mints: [] };
 
-    // Filter to within the time window
-    const recent = sigs.filter(s => (s.blockTime ?? 0) >= cutoff);
-    if (!recent.length) return 0;
-
-    // Fetch all recent txns in parallel (capped at 50 to avoid RPC hammering)
+    // Fetch up to 50 txns with jsonParsed so we can read initializeMint instruction info.
     const toCheck = recent.slice(0, 50);
     const txResps = await Promise.all(
       toCheck.map(s =>
         rpcCall('getTransaction', [
           s.signature,
-          { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+          { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
         ]).catch(() => null)
       )
     );
 
-    // Count txns that reference a SPL Token program (strongly implies mint creation)
-    // We look for the token program in the static account keys — cheap, no instruction decoding needed.
-    let count = 0;
-    const seen = new Set();
-    for (const r of txResps) {
-      if (!r?.result) continue;
-      const keys = r.result.transaction?.message?.staticAccountKeys
-                ?? r.result.transaction?.message?.accountKeys
-                ?? [];
-      const keyStrs = keys.map(k => typeof k === 'string' ? k : k?.pubkey ?? '');
-      if (keyStrs.includes(_SPL_TOKEN) || keyStrs.includes(_SPL_TOKEN_22)) {
-        // Use the first non-deployer account key as a proxy mint address to deduplicate
-        const mintProxy = keyStrs.find(k => k && k !== deployerAddress) ?? s?.signature;
-        if (mintProxy && !seen.has(mintProxy)) {
-          seen.add(mintProxy);
-          count++;
+    const mints = [];
+    const seen  = new Set();
+
+    // Scan both outer and inner instructions for initializeMint calls.
+    function _scanIxs(instructions) {
+      for (const ix of (instructions ?? [])) {
+        const pid = ix.programId ?? '';
+        if (pid !== _SPL_TOKEN && pid !== _SPL_TOKEN_22) continue;
+        const t = ix.parsed?.type ?? '';
+        if (t === 'initializeMint' || t === 'initializeMint2') {
+          const m = ix.parsed?.info?.mint;
+          if (m && !seen.has(m)) { seen.add(m); mints.push(m); }
         }
       }
     }
-    return count;
+
+    for (const r of txResps) {
+      if (!r?.result) continue;
+      _scanIxs(r.result.transaction?.message?.instructions);
+      for (const inner of (r.result.meta?.innerInstructions ?? [])) {
+        _scanIxs(inner.instructions);
+      }
+    }
+
+    return { tokenCount: mints.length, mints };
   } catch (_) {
-    return 0;
+    return { tokenCount: 0, mints: [] };
   }
+}
+
+/**
+ * Counts how many tokens the deployer has launched in the last `windowDays` days.
+ * Thin wrapper over getDeployerTokenData for backwards compatibility.
+ */
+async function getDeployerTokenCount(deployerAddress, windowDays = 30) {
+  const { tokenCount } = await getDeployerTokenData(deployerAddress, windowDays);
+  return tokenCount;
 }

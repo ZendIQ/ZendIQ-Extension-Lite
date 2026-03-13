@@ -21,7 +21,8 @@
  *  9.  Long-term price change (GeckoTerminal, up to ~6M)
  * 10.  Volume trend / activity collapse (GeckoTerminal)
  * 11.  Token age (DexScreener pairCreatedAt)
- * 12.  24h price change (DexScreener)
+ * 12.  24h price change — on pump.fun: large gains = pump-in-progress (CRIT/HIGH/MED);
+ *      elsewhere: large drops = rug/exit signal
  * 13.  Liquidity depth (DexScreener)
  * 14.  Market cap (DexScreener)
  * 15.  Serial deployer — how many tokens the creator wallet launched in last 30d
@@ -484,10 +485,21 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
   }
 
   // ── 11. 24h price change ──────────────────────────────────────────────────
+  // On pump.fun every token is brand-new, so a large positive gain means the pump
+  // phase is active and a dump is likely imminent — the inverse of the normal signal.
   if (dexData?.priceChange24h != null) {
     const chg = parseFloat(dexData.priceChange24h);
     if (isFinite(chg)) {
-      if (chg <= -50) {
+      if (_isPumpFunSite && chg >= 200) {
+        score += 12;
+        factors.push({ name: `Active pump: +${chg.toFixed(0)}% in 24h`, severity: 'CRITICAL', detail: `+${chg.toFixed(1)}% since launch — token is in the pump phase. Dump typically follows immediately after this level of gain.` });
+      } else if (_isPumpFunSite && chg >= 80) {
+        score += 8;
+        factors.push({ name: `Pump in progress: +${chg.toFixed(0)}% in 24h`, severity: 'HIGH', detail: `+${chg.toFixed(1)}% since launch — significant pump detected. High probability of sharp reversal.` });
+      } else if (_isPumpFunSite && chg >= 30) {
+        score += 4;
+        factors.push({ name: `Rising fast: +${chg.toFixed(0)}% in 24h`, severity: 'MEDIUM', detail: `+${chg.toFixed(1)}% since launch — elevated momentum. Watch for a sudden reversal.` });
+      } else if (chg <= -50) {
         score += 12;
         factors.push({ name: `Price −${Math.abs(chg).toFixed(0)}% in 24h`, severity: 'CRITICAL', detail: `Dropped ${Math.abs(chg).toFixed(1)}% in 24h — possible rug pull or coordinated exit.` });
       } else if (chg <= -30) {
@@ -498,7 +510,7 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
         factors.push({ name: `Price −${Math.abs(chg).toFixed(0)}% in 24h`, severity: 'MEDIUM', detail: `Notable decline of ${Math.abs(chg).toFixed(1)}% in 24h.` });
       } else {
         const sign = chg >= 0 ? '+' : '';
-        factors.push({ name: `24h price: ${sign}${chg.toFixed(1)}%`, severity: 'LOW', detail: `No significant downward movement.` });
+        factors.push({ name: `24h price: ${sign}${chg.toFixed(1)}%`, severity: 'LOW', detail: _isPumpFunSite ? `Modest movement since launch — not yet in active pump territory.` : `No significant downward movement.` });
       }
     }
   }

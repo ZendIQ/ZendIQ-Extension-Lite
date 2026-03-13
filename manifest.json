@@ -34,6 +34,7 @@
       ],
       "js": [
         "src/scripts/page-config.js",
+        "src/utils/extraction.js",
         "src/utils/scoring.js",
         "src/scripts/page-interceptor.js",
         "src/scripts/page-wallet.js",

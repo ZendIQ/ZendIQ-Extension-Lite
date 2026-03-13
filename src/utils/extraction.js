@@ -28,6 +28,11 @@
 const _SPL_TOKEN    = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss624VQ5SDWKn';
 const _SPL_TOKEN_22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
+// rpcCall is provided by page-config.js via window.__zqlite.rpcCall
+function rpcCall(method, params) {
+  return window.__zqlite.rpcCall(method, params);
+}
+
 async function getCreatorFromMint(mint) {
   if (!mint || typeof mint !== 'string') return null;
   try {

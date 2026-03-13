@@ -434,25 +434,29 @@
 
   const _CSS = `
 #__zqlite_bd{position:fixed;inset:0;background:rgba(0,0,0,.78);backdrop-filter:blur(5px);
-  z-index:2147483647;display:flex;align-items:center;justify-content:center;
+  z-index:2147483646;display:flex;align-items:center;justify-content:center;
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;animation:__zq_fade .18s ease}
 @keyframes __zq_fade{from{opacity:0}to{opacity:1}}
 .__zq_card{background:#0F0F1B;border:1px solid rgba(255,255,255,.12);border-radius:16px;
-  width:390px;max-width:calc(100vw - 24px);max-height:88vh;overflow-y:auto;
+  width:420px;max-width:calc(100vw - 24px);max-height:92vh;display:flex;flex-direction:column;
   box-shadow:0 28px 60px rgba(0,0,0,.92)}
 .__zq_hd{display:flex;align-items:center;gap:10px;padding:15px 18px 13px;
-  border-bottom:1px solid rgba(255,255,255,.07)}
+  border-bottom:1px solid rgba(255,255,255,.07);flex-shrink:0}
 .__zq_ht{flex:1;font-size:13px;font-weight:700;color:#E8E8F0;letter-spacing:.15px}
-.__zq_body{padding:16px 18px 10px}
-.__zq_sr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.__zq_body{padding:14px 18px 8px;flex:1;overflow-y:auto;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.12) transparent}
+.__zq_body::-webkit-scrollbar{width:4px}
+.__zq_body::-webkit-scrollbar-track{background:transparent}
+.__zq_body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:4px}
+.__zq_sr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
 .__zq_sn{font-size:44px;font-weight:900;font-family:'Space Mono',monospace;line-height:1}
 .__zq_sp{padding:5px 12px;border-radius:20px;font-size:11px;font-weight:700;
   background:rgba(255,255,255,.06);border:1px solid transparent}
-.__zq_fl{display:flex;flex-direction:column;gap:5px;max-height:200px;overflow-y:auto}
+.__zq_fl{display:flex;flex-direction:column;gap:4px}
 .__zq_fi{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;
   background:rgba(255,255,255,.03);font-size:10.5px;color:#E8E8F0;
   cursor:help;transition:background .12s}.__zq_fi:hover{background:rgba(255,255,255,.07)}
-.__zq_ai{display:flex;gap:10px;padding:13px 18px 11px;border-top:1px solid rgba(255,255,255,.07)}
+.__zq_ai{display:flex;gap:10px;padding:12px 18px 11px;border-top:1px solid rgba(255,255,255,.07);flex-shrink:0}
 .__zq_btn{flex:1;padding:11px 14px;border-radius:10px;border:none;font-size:12px;font-weight:700;
   cursor:pointer;transition:filter .15s;white-space:nowrap}.__zq_btn:hover{filter:brightness(1.15)}
 .__zq_cancel{background:rgba(255,255,255,.08);color:#E8E8F0}

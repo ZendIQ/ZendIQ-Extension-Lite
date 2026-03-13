@@ -9,13 +9,13 @@
  *  - Removed ns.widgetCapturedTrade / ns.jupiterLiveQuote references
  *  - Cache is module-level (not attached to global namespace)
  *
- * Signals checked (12 active):
+ * Signals checked (15 active):
  *  1.  Mint authority (can devs print unlimited tokens?)
  *  2.  Freeze authority (can devs lock your tokens?)
  *  3.  Top-1 holder concentration
  *  4.  Top-5 holder concentration
  *  5.  RugCheck.xyz risk report (known rug flags, danger/warn items)
- *  6.  Speculative / memecoin market risk
+ *  6.  Speculative / memecoin market risk (pump.fun = guaranteed CRITICAL)
  *  7.  LP lock status
  *  8.  3-month price change (GeckoTerminal)
  *  9.  Long-term price change (GeckoTerminal, up to ~6M)
@@ -24,6 +24,9 @@
  * 12.  24h price change (DexScreener)
  * 13.  Liquidity depth (DexScreener)
  * 14.  Market cap (DexScreener)
+ * 15.  Serial deployer — how many tokens the creator wallet launched in last 30d
+ *      (getRealDeployer + getDeployerTokenCount from extraction.js)
+ *      +8 MEDIUM ≥2 tokens · +20 HIGH ≥4 tokens · +35 CRITICAL ≥10 tokens
  *
  * Score 0–100: LOW <25 | MEDIUM 25–49 | HIGH 50–74 | CRITICAL ≥75
  */
@@ -227,7 +230,7 @@ const RUGCHECK_NOISE = [
   'metadata',
 ];
 
-function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint) {
+function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData) {
   let score = 0;
   const factors = [];
 
@@ -509,6 +512,42 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint)
     }
   }
 
+  // ── 14. Serial deployer check ─────────────────────────────────────────────
+  // deployerData: { address: string, tokenCount: number } | null
+  // A wallet that has launched many tokens in the last 30 days is a strong
+  // indicator of a bot-operated rug factory.
+  if (deployerData?.address) {
+    const tc = deployerData.tokenCount ?? 0;
+    if (tc >= 10) {
+      score += 35;
+      factors.push({
+        name: `Bot-created token — ${tc} deploys in 30d`,
+        severity: 'CRITICAL',
+        detail: `Creator wallet launched ${tc} tokens in the last 30 days — automated rug factory behaviour. Extremely high probability of total loss.`,
+      });
+    } else if (tc >= 4) {
+      score += 20;
+      factors.push({
+        name: `Serial launcher — ${tc} tokens in 30d`,
+        severity: 'HIGH',
+        detail: `Creator wallet has launched ${tc} tokens recently. Rapid serial launches are a common rug-pull pattern.`,
+      });
+    } else if (tc >= 2) {
+      score += 8;
+      factors.push({
+        name: `Repeat creator — ${tc} tokens in 30d`,
+        severity: 'MEDIUM',
+        detail: `Creator has launched ${tc} tokens in the last 30 days. Monitor carefully — may be exploratory or adversarial.`,
+      });
+    } else {
+      factors.push({
+        name: `New creator wallet`,
+        severity: 'LOW',
+        detail: `No serial-launch pattern detected for this deployer wallet in the last 30 days.`,
+      });
+    }
+  }
+
   // ── Fallback: no data available ───────────────────────────────────────────
   if (!mintInfo && !holderData && !rugCheck && !dexData && !geckoData) {
     score += 15;
@@ -520,7 +559,8 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint)
   const dataSource = rugCheck ? 'rugcheck+onchain' : mintInfo ? 'onchain' : dexData ? 'dexscreener' : 'unknown';
   const symbol     = rugCheck?.tokenMeta?.symbol ?? dexData?.symbol ?? null;
 
-  return { mint, symbol, score: finalScore, level, factors, loaded: true, error: null, dataSource };
+  return { mint, symbol, score: finalScore, level, factors, loaded: true, error: null, dataSource,
+    deployer: deployerData?.address ?? null, deployerTokenCount: deployerData?.tokenCount ?? null };
 }
 
 // ── Public: fetchTokenScore(mint, symbol?) ────────────────────────────────────
@@ -569,7 +609,23 @@ async function fetchTokenScore(mint, symbol) {
       _fetchGeckoTerminal(mint).catch(() => null),
     ]);
 
-    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint);
+    // Deployer lookup — runs after mint data so we can use the real deployer address.
+    // getRealDeployer + getDeployerTokenCount are defined in extraction.js (MAIN world)
+    // or stubbed to null in popup context where extraction.js is not loaded.
+    let deployerData = null;
+    try {
+      if (typeof getRealDeployer === 'function') {
+        const address = await getRealDeployer(mint);
+        if (address) {
+          const tokenCount = typeof getDeployerTokenCount === 'function'
+            ? await getDeployerTokenCount(address, 30)
+            : 0;
+          deployerData = { address, tokenCount };
+        }
+      }
+    } catch (_) { /* deployer lookup is best-effort */ }
+
+    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData);
     _setCached(mint, result);
     return result;
   } catch (err) {

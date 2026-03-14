@@ -309,11 +309,11 @@
     const txt = (btn.textContent ?? '').trim().replace(/\s+/g, ' ');
     // Jupiter / Raydium: "Swap" or "Confirm Swap"
     const _isSwapBtn = /^(confirm\s+)?swap$/i.test(txt);
-    // Pump.fun: "Buy [TokenName]", "Buy", or "Place Trade" — only when a mint is known
-    // (guards against intercepting nav-only "Buy X" links on the homepage before a coin is selected)
+    // Pump.fun: "Buy [TokenName]" or "Place Trade" — only when a mint is known.
+    // Requires a token name after "Buy" so the Buy/Sell toggle tab (bare "Buy") doesn't trigger.
     const _isPumpBuy = location.hostname.includes('pump.fun')
       && !!ns.lastOutputMint
-      && /^(buy(\s+\S.*)?|place\s+trade)$/i.test(txt)
+      && /^(buy\s+\S.*|place\s+trade)$/i.test(txt)
       && txt.length <= 40;
     if (!_isSwapBtn && !_isPumpBuy) return;
 

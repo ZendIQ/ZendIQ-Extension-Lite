@@ -6,7 +6,6 @@
 (function () {
   'use strict';
   if (window.__zqlite) return;
-  console.log('[ZendIQ Lite] ✓ page-config.js running on', location.hostname);
 
   // ── Correlation map for async postMessage round-trips ─────────────────────
   let _msgId = 0;

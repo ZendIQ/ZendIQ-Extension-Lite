@@ -412,7 +412,6 @@
   // Fallback for any signing path not caught by the click interceptor above.
 
   ns.handleTransaction = async function (tx, opts, originalFn, _method) {
-    console.log('[ZendIQ Lite] handleTransaction called, method=', _method);
     if (!ns.settings.enabled) return originalFn(tx, opts);
 
     // Site-level toggle check — only bypass, never skip the overlay for enabled sites

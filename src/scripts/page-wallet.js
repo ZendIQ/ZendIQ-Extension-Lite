@@ -33,7 +33,6 @@
     const wallet = window.solana ?? window.phantom?.solana;
     if (!wallet || ns.walletHooked) return;
     ns.walletHooked = true;
-    console.log('[ZendIQ Lite] ✓ Legacy wallet hooked (window.solana)');
 
     const realSign  = wallet.signTransaction?.bind(wallet);
     const realSAS   = wallet.signAndSendTransaction?.bind(wallet);
@@ -196,7 +195,6 @@
         }
       }
     } catch (_) {}
-    if (found) console.log('[ZendIQ Lite] ✓ Wallet Standard wallet hooked (probe)');
     return found;
   }
 
@@ -226,10 +224,8 @@
               if (!w?.features) continue;
               if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
               hookWsWallet(w, w.accounts?.[0] ?? null);
-              console.log('[ZendIQ Lite] ✓ Wallet Standard wallet hooked via registry.on');
             }
           });
-          console.log('[ZendIQ Lite] ✓ Subscribed to navigator.wallets registry');
         }
       } catch (_) {}
       // Also intercept navigator.wallets.push directly
@@ -242,7 +238,6 @@
               if (!w?.features) continue;
               if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
               hookWsWallet(w, w.accounts?.[0] ?? null);
-              console.log('[ZendIQ Lite] ✓ Wallet Standard wallet hooked via registry.push');
             }
             return origPush(...wallets);
           };

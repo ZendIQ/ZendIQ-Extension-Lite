@@ -15,7 +15,6 @@
     "https://api.geckoterminal.com/*",
     "https://api.mainnet-beta.solana.com/*",
     "https://solana.publicnode.com/*",
-    "http://localhost/*",
     "*://jup.ag/*",
     "*://*.jup.ag/*",
     "*://raydium.io/*",

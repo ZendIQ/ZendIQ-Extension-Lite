@@ -8,11 +8,6 @@ function loadSettings() {
   if (!panel) return;
 
   chrome.storage.local.get(['zqlite_settings', 'liteBackendUrl'], ({ zqlite_settings: s = {}, liteBackendUrl }) => {
-    // Seed default on first open so events flow without requiring manual entry
-    if (liteBackendUrl === undefined) {
-      liteBackendUrl = 'http://localhost:3000';
-      chrome.storage.local.set({ liteBackendUrl });
-    }
     const enabled  = s.enabled      !== false;
     const level    = s.minRiskLevel ?? 'MEDIUM';
     const sites    = s.sites        ?? { jupiter: true, raydium: true, pumpfun: true };

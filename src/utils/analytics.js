@@ -6,20 +6,19 @@
  * Never throws; never blocks the caller.
  */
 
+const BACKEND_URL = 'https://zendiq-backend.onrender.com';
+
 function logEvent(type, data) {
   if (!type || typeof type !== 'string') return;
-  chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
-    if (!liteBackendUrl || typeof liteBackendUrl !== 'string') return;
-    const url = liteBackendUrl.replace(/\/+$/, '') + '/api/events';
-    chrome.runtime.sendMessage({
-      type: 'LOG_EVENT',
-      url,
-      payload: {
-        type,
-        data: data ?? {},
-        ts: Date.now(),
-        v: chrome.runtime.getManifest().version,
-      },
-    }, () => void chrome.runtime.lastError);
-  });
+  const url = BACKEND_URL + '/api/events';
+  chrome.runtime.sendMessage({
+    type: 'LOG_EVENT',
+    url,
+    payload: {
+      type,
+      data: data ?? {},
+      ts: Date.now(),
+      v: chrome.runtime.getManifest().version,
+    },
+  }, () => void chrome.runtime.lastError);
 }

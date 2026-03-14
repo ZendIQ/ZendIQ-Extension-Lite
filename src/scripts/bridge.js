@@ -131,15 +131,11 @@ window.addEventListener('message', (e) => {
   if (d.type === 'ZQLITE_LOG_EVENT') {
     const { eventType, data } = d;
     if (!eventType || typeof eventType !== 'string' || eventType.length > 64) return;
-    chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
-      if (!liteBackendUrl || typeof liteBackendUrl !== 'string') return;
-      const url = liteBackendUrl.replace(/\/+$/, '') + '/api/events';
-      chrome.runtime.sendMessage({
-        type: 'LOG_EVENT',
-        url,
-        payload: { type: eventType, data: data ?? {}, ts: Date.now(), v: chrome.runtime.getManifest().version, ext_id: chrome.runtime.id },
-      }, () => void chrome.runtime.lastError);
-    });
+    chrome.runtime.sendMessage({
+      type: 'LOG_EVENT',
+      url: 'https://zendiq-backend.onrender.com/api/events',
+      payload: { type: eventType, data: data ?? {}, ts: Date.now(), v: chrome.runtime.getManifest().version, ext_id: chrome.runtime.id },
+    }, () => void chrome.runtime.lastError);
     return;
   }
 });

@@ -13,19 +13,9 @@ const FETCH_JSON_ALLOWED = new Set([
   'https://solana.publicnode.com',
 ]);
 
-// Dynamic: the user's configured backend URL origin is loaded on startup.
-// This lets version checks and settings calls reach the own backend.
-let _backendOrigin = null;
-chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
-  try { if (liteBackendUrl) _backendOrigin = new URL(liteBackendUrl).origin; } catch {}
-});
-chrome.storage.onChanged.addListener((changes) => {
-  if (changes.liteBackendUrl) {
-    try { _backendOrigin = changes.liteBackendUrl.newValue
-      ? new URL(changes.liteBackendUrl.newValue).origin : null;
-    } catch { _backendOrigin = null; }
-  }
-});
+// Backend URL — hardcoded for the store build.
+const BACKEND_URL = 'https://zendiq-backend.onrender.com';
+const _backendOrigin = new URL(BACKEND_URL).origin;
 
 // RPC endpoints tried in order; falls back on hard error
 const RPC_ENDPOINTS = [
@@ -37,16 +27,11 @@ const RPC_ENDPOINTS = [
 // Fire-and-forget: POST an event to the user-configured backend.
 // Silently no-ops when no backend URL has been set.
 function _logToBackend(type, data) {
-  chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
-    if (!liteBackendUrl || typeof liteBackendUrl !== 'string') return;
-    let origin;
-    try { origin = new URL(liteBackendUrl).origin; } catch { return; }
-    fetch(origin + '/api/events', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, data: data ?? {}, v: chrome.runtime.getManifest().version, ts: Date.now(), ext_id: chrome.runtime.id }),
-    }).catch(() => {});
-  });
+  fetch(BACKEND_URL + '/api/events', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, data: data ?? {}, v: chrome.runtime.getManifest().version, ts: Date.now(), ext_id: chrome.runtime.id }),
+  }).catch(() => {});
 }
 
 // extension_installed — fires once on fresh install or on any version update
@@ -148,14 +133,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'LOG_EVENT') {
     const { url, payload } = msg;
     if (!url || typeof url !== 'string') { sendResponse({ ok: false }); return true; }
-    // Validate URL is our own backend (set via extension storage by the user/admin)
-    chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
-      const backendUrl = liteBackendUrl || null;
+    {
       let urlOriginOk = false;
-      try { urlOriginOk = backendUrl && new URL(url).origin === new URL(backendUrl).origin; } catch {}
+      try { urlOriginOk = new URL(url).origin === _backendOrigin; } catch {}
       if (!urlOriginOk) {
-        // If no backend configured, silently drop — logging is non-critical
-        sendResponse({ ok: false, error: 'Backend not configured' });
+        sendResponse({ ok: false, error: 'Invalid backend URL' });
         return;
       }
       fetch(url, {
@@ -165,7 +147,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       })
         .then(() => sendResponse({ ok: true }))
         .catch(() => sendResponse({ ok: false }));
-    });
+    }
     return true;
   }
 

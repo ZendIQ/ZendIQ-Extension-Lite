@@ -121,9 +121,25 @@ window.addEventListener('message', (e) => {
     return;
   }
 
-  // ── Open popup (called from page when overlay wants to open popup) ─────────
+  // ── Open popup (called from page when overlay wants to open popup) ———————
   if (d.type === 'ZQLITE_OPEN_POPUP') {
     try { chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }, () => void chrome.runtime.lastError); } catch (_) {}
+    return;
+  }
+
+  // ── Log event → backend (via background LOG_EVENT handler) —————————————
+  if (d.type === 'ZQLITE_LOG_EVENT') {
+    const { eventType, data } = d;
+    if (!eventType || typeof eventType !== 'string' || eventType.length > 64) return;
+    chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
+      if (!liteBackendUrl || typeof liteBackendUrl !== 'string') return;
+      const url = liteBackendUrl.replace(/\/+$/, '') + '/api/events';
+      chrome.runtime.sendMessage({
+        type: 'LOG_EVENT',
+        url,
+        payload: { type: eventType, data: data ?? {}, ts: Date.now(), v: chrome.runtime.getManifest().version, ext_id: chrome.runtime.id },
+      }, () => void chrome.runtime.lastError);
+    });
     return;
   }
 });

@@ -7,7 +7,12 @@ function loadSettings() {
   const panel = document.getElementById('panel-settings');
   if (!panel) return;
 
-  chrome.storage.local.get(['zqlite_settings'], ({ zqlite_settings: s = {} }) => {
+  chrome.storage.local.get(['zqlite_settings', 'liteBackendUrl'], ({ zqlite_settings: s = {}, liteBackendUrl }) => {
+    // Seed default on first open so events flow without requiring manual entry
+    if (liteBackendUrl === undefined) {
+      liteBackendUrl = 'http://localhost:3000';
+      chrome.storage.local.set({ liteBackendUrl });
+    }
     const enabled  = s.enabled      !== false;
     const level    = s.minRiskLevel ?? 'MEDIUM';
     const sites    = s.sites        ?? { jupiter: true, raydium: true, pumpfun: true };
@@ -96,6 +101,21 @@ function loadSettings() {
         </div>
       </div>
 
+      <!-- Backend URL -->  
+      <div class="setting-group">
+        <div class="setting-group-label">Analytics Backend (optional)</div>
+        <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+          <div class="setting-sub">URL of your ZendIQ Lite backend for event logging and version checks. Leave blank to disable.</div>
+          <input
+            type="url"
+            id="s-backend-url"
+            placeholder="http://localhost:3000"
+            value="${escHtml(liteBackendUrl)}"
+            style="width:100%;box-sizing:border-box;background:#0d0d1a;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e8e8ff;font-size:12px;padding:8px 10px;outline:none"
+          />
+        </div>
+      </div>
+
       <div style="font-size:9px;color:var(--muted);line-height:1.6;margin-top:2px">
         Settings apply on the next page load. Reload the DEX tab after changing.
       </div>
@@ -105,6 +125,11 @@ function loadSettings() {
     ['s-enabled', 's-jupiter', 's-raydium', 's-pumpfun'].forEach(id => {
       document.getElementById(id)?.addEventListener('change', _saveSettings);
     });
+
+    // Backend URL — save on blur or Enter
+    const backendInput = document.getElementById('s-backend-url');
+    backendInput?.addEventListener('blur', _saveBackendUrl);
+    backendInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _saveBackendUrl(); } });
 
     // Custom risk-level dropdown
     const _LEVEL_LABELS = { ALL: 'All tokens', MEDIUM: 'Medium+', HIGH: 'High+', CRITICAL: 'Critical only' };
@@ -152,6 +177,17 @@ function loadSettings() {
       });
     });
   });
+}
+
+function _saveBackendUrl() {
+  const val = document.getElementById('s-backend-url')?.value?.trim() ?? '';
+  // Validate: must be empty or a valid http/https URL
+  if (val && !/^https?:\/\/.+/.test(val)) {
+    document.getElementById('s-backend-url').style.borderColor = '#FF4444';
+    return;
+  }
+  document.getElementById('s-backend-url').style.borderColor = val ? '#14F195' : 'rgba(255,255,255,0.1)';
+  chrome.storage.local.set({ liteBackendUrl: val });
 }
 
 function _saveSettings() {

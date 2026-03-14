@@ -33,6 +33,42 @@ const RPC_ENDPOINTS = [
   'https://api.mainnet-beta.solana.com',
 ];
 
+// ── Analytics helpers ────────────────────────────────────────────────────────
+// Fire-and-forget: POST an event to the user-configured backend.
+// Silently no-ops when no backend URL has been set.
+function _logToBackend(type, data) {
+  chrome.storage.local.get(['liteBackendUrl'], ({ liteBackendUrl }) => {
+    if (!liteBackendUrl || typeof liteBackendUrl !== 'string') return;
+    let origin;
+    try { origin = new URL(liteBackendUrl).origin; } catch { return; }
+    fetch(origin + '/api/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, data: data ?? {}, v: chrome.runtime.getManifest().version, ts: Date.now(), ext_id: chrome.runtime.id }),
+    }).catch(() => {});
+  });
+}
+
+// extension_installed — fires once on fresh install or on any version update
+chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
+  if (reason !== 'install' && reason !== 'update') return;
+  _logToBackend('extension_installed', {
+    reason,
+    prev_version: previousVersion ?? null,
+    browser: navigator.userAgent.includes('Brave') ? 'brave' : 'chrome',
+  });
+});
+
+// daily_active — at most once per UTC calendar day on any service worker wake
+(function () {
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  chrome.storage.local.get(['_zqlite_last_active_day'], ({ _zqlite_last_active_day }) => {
+    if (_zqlite_last_active_day === today) return;
+    chrome.storage.local.set({ _zqlite_last_active_day: today });
+    _logToBackend('daily_active', { day: today });
+  });
+})();
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   // ── Ping ────────────────────────────────────────────────────────────────

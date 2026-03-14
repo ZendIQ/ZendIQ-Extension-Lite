@@ -106,6 +106,20 @@
         const segs = new URL(url, location.origin).pathname.split('/')
           .filter(p => p.length >= 32 && p.length <= 50 && /^[1-9A-HJ-NP-Za-km-z]+$/.test(p));
         if (segs[0] && segs[0] !== ns.lastOutputMint) { ns.lastOutputMint = segs[0]; _probeScore(segs[0]); }
+        // Capture the SOL amount from the POST body so we can report trade_sol in event payloads.
+        // pump.fun sends { amount: 0.5, denominatedInSol: "true" } or { amount: 500, denominatedInSol: "false" }
+        // (false case = token quantity — we can't trivially convert that to SOL, so we skip it)
+        if ((opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body) {
+          try {
+            const _b = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+            if (_b && typeof _b.amount === 'number' && _b.amount > 0) {
+              const _inSol = _b.denominatedInSol == null
+                || _b.denominatedInSol === true
+                || String(_b.denominatedInSol).toLowerCase() === 'true';
+              if (_inSol) ns.lastPumpSolAmount = _b.amount;
+            }
+          } catch (_) {}
+        }
       }
 
       // ── Capture transaction signature from execute / RPC response ──────────
@@ -252,7 +266,14 @@
       _scoreInFlight.delete(mint);
       _baseInFlight.delete(mint);
       _resolveBase(result); // fallback — ensures baseP resolves even if onBase wasn't called
-      if (result) window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result, ts: Date.now(), site: location.hostname } }, '*');
+      if (result) {
+        window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result, ts: Date.now(), site: location.hostname } }, '*');
+        window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: 'token_checked', data: { mint, score: result.score, level: result.level, site: location.hostname } }, '*');
+        // high_risk_detected — score >= 50 (HIGH threshold)
+        if (result.score >= 50) {
+          window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: 'high_risk_detected', data: { mint, score: result.score, level: result.level, site: location.hostname } }, '*');
+        }
+      }
       return result;
     }).catch(() => {
       _scoreInFlight.delete(mint);
@@ -344,6 +365,8 @@
     const threshold = SCORE_THRESHOLD[ns.settings.minRiskLevel ?? 'MEDIUM'] ?? 25;
     const isRisky   = score != null && score.score >= threshold;
 
+    window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: 'transaction_initiated', data: { mint, score: score?.score ?? null, level: score?.level ?? null, site: location.hostname, path: 'click' } }, '*');
+
     let decision;
     try {
       decision = await _showOverlay(score, _scorePromise, _fullPromise);
@@ -353,6 +376,30 @@
 
     const _finalScore = (mint && ns.lastTokenScore?.mint === mint) ? ns.lastTokenScore : score;
     _addToHistory({ ts: Date.now(), mint, symbol: _finalScore?.symbol ?? null, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, decision, site: location.hostname });
+
+    const _od = ns.lastOrderDetails;
+    const _tradeUsd = _od?.inUsdValue ?? null;
+
+    // For pump.fun buys: the fetch intercept fires AFTER we re-fire the click, so it can't
+    // populate ns.lastPumpSolAmount in time for this event.  Instead, read the SOL amount
+    // directly from the visible input field while we still have access to the clicked button.
+    if (_isPumpBuy && _tradeUsd == null) {
+      let _c = btn.parentElement;
+      for (let _i = 0; _i < 8 && _c; _i++, _c = _c.parentElement) {
+        const _inp = _c.querySelector('input[type="number"], input[inputmode="decimal"], input[inputmode="numeric"]');
+        if (_inp && _inp.value) {
+          const _v = parseFloat(_inp.value);
+          if (_v > 0 && _v < 10000) { ns.lastPumpSolAmount = _v; break; }
+        }
+      }
+    }
+    const _tradeSol = _tradeUsd == null ? (ns.lastPumpSolAmount ?? null) : null;
+
+    const _isHighRisk = (_finalScore?.score ?? 0) >= 50;
+    const _evtName = decision === 'cancel'
+      ? (_isHighRisk ? 'avoided_high_risk' : 'transaction_aborted')
+      : (_isHighRisk ? 'proceeded_high_risk' : 'transaction_completed');
+    window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: _evtName, data: { mint, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, trade_usd: _tradeUsd, trade_sol: _tradeSol, site: location.hostname } }, '*');
 
     if (decision === 'cancel') return; // do nothing — swap never continues
 
@@ -426,6 +473,8 @@
     const threshold = SCORE_THRESHOLD[ns.settings.minRiskLevel ?? 'MEDIUM'] ?? 25;
     const isRisky   = score != null && score.score >= threshold;
 
+    window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: 'transaction_initiated', data: { mint, score: score?.score ?? null, level: score?.level ?? null, site: host, path: 'wallet' } }, '*');
+
     // Overlay always requires manual confirmation — no auto-proceed.
     const decision = await _showOverlay(score, _scorePromise, _fullPromise);
 
@@ -434,6 +483,17 @@
       ts: Date.now(), mint, symbol: _finalScore?.symbol ?? null,
       score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, decision, site: host,
     });
+
+    const _od2 = ns.lastOrderDetails;
+    const _tradeUsd2 = _od2?.inUsdValue ?? null;
+    // On the wallet-hook path the fetch intercept fires before wallet.signTransaction,
+    // so ns.lastPumpSolAmount is already populated from the pump.fun API POST body.
+    const _tradeSol2 = _tradeUsd2 == null ? (ns.lastPumpSolAmount ?? null) : null;
+    const _isHighRisk2 = (_finalScore?.score ?? 0) >= 50;
+    const _evtName2 = decision === 'cancel'
+      ? (_isHighRisk2 ? 'avoided_high_risk' : 'transaction_aborted')
+      : (_isHighRisk2 ? 'proceeded_high_risk' : 'transaction_completed');
+    window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: _evtName2, data: { mint, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, trade_usd: _tradeUsd2, trade_sol: _tradeSol2, site: host } }, '*');
 
     if (decision === 'cancel') throw new Error('ZendIQ Lite: swap cancelled by user (token risk)');
     return originalFn(tx, opts);

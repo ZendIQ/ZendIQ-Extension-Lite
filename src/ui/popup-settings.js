@@ -97,7 +97,7 @@ function loadSettings() {
       </div>
 
       <div style="font-size:9px;color:var(--muted);line-height:1.6;margin-top:2px">
-        Settings apply on the next page load. Reload the DEX tab after changing.
+        Changes take effect immediately on open tabs.
       </div>
     `;
 

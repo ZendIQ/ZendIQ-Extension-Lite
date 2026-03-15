@@ -434,6 +434,11 @@
   window.__zqlite_swap_bypass = false;
   document.addEventListener('click', async (e) => {
     if (window.__zqlite_swap_bypass) return;
+    if (!ns.settings.enabled) return;
+    const _sh = location.hostname;
+    if (_sh.includes('jup.ag')   && !ns.settings.sites?.jupiter) return;
+    if (_sh.includes('raydium')  && !ns.settings.sites?.raydium)  return;
+    if (_sh.includes('pump.fun') && !ns.settings.sites?.pumpfun)  return;
     const btn = e.target?.closest?.('button, [role="button"]');
     if (!btn) return;
     const txt = (btn.textContent ?? '').trim().replace(/\s+/g, ' ');

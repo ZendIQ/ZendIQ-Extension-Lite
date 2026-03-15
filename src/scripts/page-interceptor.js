@@ -140,29 +140,8 @@
             if (_bodyMint) { ns.lastOutputMint = _bodyMint; _probeScore(_bodyMint); }
           } catch (_) {}
         }
-        // Also check response body (Raydium sometimes puts mints + amounts in the JSON response)
-        resp.then(r => r.clone().json().then(d => {
-          const m = d?.data?.outputMint ?? d?.outputMint ?? d?.data?.quoteMint ?? d?.data?.mintB;
-          if (m && m !== ns.lastOutputMint) { ns.lastOutputMint = m; _probeScore(m); }
-          // Capture quoted output amount for Quote Accuracy (route-compute / compute response)
-          // Raydium v3: d.data.outputAmount (raw integer string)
-          const rawOut = d?.data?.outputAmount ?? d?.data?.amountOut ?? d?.data?.outAmount
-                         ?? d?.outputAmount ?? d?.amountOut ?? null;
-          const rawIn  = d?.data?.inputAmount  ?? d?.data?.amountIn  ?? d?.data?.inAmount
-                         ?? d?.inputAmount  ?? d?.amountIn  ?? null;
-          const outMint = m ?? ns.lastOutputMint ?? null;
-          if (rawOut != null && outMint) {
-            ns.lastOrderDetails = {
-              outAmount:   String(rawOut),
-              inAmount:    rawIn != null ? String(rawIn) : null,
-              outputMint:  outMint,
-              inputMint:   d?.data?.inputMint ?? d?.inputMint ?? ns.lastInputMint ?? null,
-              inUsdValue:  null,
-              outUsdValue: null,
-              swapType:    d?.data?.swapType ?? null,
-            };
-          }
-        }).catch(() => {})).catch(() => {});
+        // Also check response body for mints + amounts (fetch-based callers)
+        resp.then(r => r.clone().json().then(d => { _tapRaydiumResponse(url, d); }).catch(() => {})).catch(() => {});
       }
       // Pump.fun — mint is typically a path segment in trade/buy URLs
       if (/pump\.fun/.test(url) && /\/(trade|buy|swap)/.test(url)) {
@@ -241,6 +220,56 @@
     return resp;
   };
 
+  // ── Shared: parse a Raydium compute/swap JSON response and update ns state ─
+  // Called from both window.fetch override (above) and the XHR hook (below)
+  // because Raydium's React bundle uses XHR for swap-base-in, not fetch.
+  function _tapRaydiumResponse(url, d) {
+    if (!/raydium\.io/.test(url)) return;
+    if (!/\/(compute|swap|quote|route|order|batch)/.test(url)
+        && !/[?&](inputMint|outputMint|mintA|mintB|quoteMint|baseMint)=/.test(url)) return;
+    const _SOL_MINT = 'So11111111111111111111111111111111111111112';
+    const _normMint = v => (v && v.toLowerCase() === 'sol') ? _SOL_MINT : (v ?? null);
+    const m = _normMint(d?.data?.outputMint ?? d?.outputMint ?? d?.data?.quoteMint ?? d?.data?.mintB);
+    if (m && m !== ns.lastOutputMint) { ns.lastOutputMint = m; _probeScore(m); }
+    const rawOut = d?.data?.outputAmount ?? d?.data?.amountOut ?? d?.data?.outAmount
+                   ?? d?.outputAmount ?? d?.amountOut ?? null;
+    const rawIn  = d?.data?.inputAmount  ?? d?.data?.amountIn  ?? d?.data?.inAmount
+                   ?? d?.inputAmount  ?? d?.amountIn  ?? null;
+    const outMint = m ?? ns.lastOutputMint ?? null;
+    if (rawOut != null && outMint) {
+      ns.lastOrderDetails = {
+        outAmount:   String(rawOut),
+        inAmount:    rawIn != null ? String(rawIn) : null,
+        outputMint:  outMint,
+        inputMint:   _normMint(d?.data?.inputMint ?? d?.inputMint ?? ns.lastInputMint),
+        inUsdValue:  null,
+        outUsdValue: null,
+        swapType:    d?.data?.swapType ?? null,
+      };
+    }
+  }
+
+  // ── XHR interception — Raydium uses XMLHttpRequest for swap-base-in ───────
+  // window.fetch only intercepts fetch() calls; Raydium's React bundle makes its
+  // route-compute calls via XHR (visible as type:xhr in DevTools Network tab).
+  (function () {
+    const _xhrOpen = XMLHttpRequest.prototype.open;
+    const _xhrSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function (method, url) {
+      try { this.__zq_url = String(url ?? ''); } catch (_) {}
+      return _xhrOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function () {
+      const _xurl = this.__zq_url ?? '';
+      if (/raydium\.io/.test(_xurl)) {
+        this.addEventListener('load', function () {
+          try { _tapRaydiumResponse(_xurl, JSON.parse(this.responseText)); } catch (_) {}
+        }, { passive: true });
+      }
+      return _xhrSend.apply(this, arguments);
+    };
+  })();
+
   // ══════════════════════════════════════════════════════════════════════════
   // 1b. POST-CONFIRM ACCURACY FETCH
   // walletPubkey is resolved lazily inside the loop — the wallet hook fires at ~400ms/2s
@@ -272,6 +301,17 @@
           const meta = tx.meta;
           let actualOut = null;
 
+          // Parse token amount robustly: uiAmount is deprecated and may be null
+          // on some RPC providers; prefer uiAmountString, then raw amount/decimals.
+          const _parseAmt = (e) => {
+            const t = e?.uiTokenAmount;
+            if (!t) return 0;
+            if (t.uiAmountString != null && t.uiAmountString !== '') return parseFloat(t.uiAmountString) || 0;
+            if (t.uiAmount       != null) return t.uiAmount;
+            if (t.amount != null && t.decimals != null) return Number(t.amount) / Math.pow(10, t.decimals);
+            return 0;
+          };
+
           if (isSOL) {
             // Find wallet's index in the account-key list
             const msg  = tx.transaction?.message ?? {};
@@ -286,16 +326,34 @@
             // SPL token — match by mint + owner in token balance snapshots
             const post = meta.postTokenBalances ?? [];
             const pre  = meta.preTokenBalances  ?? [];
-            const postEntry = post.find(e => e.mint === outputMint && e.owner === walletPubkey);
-            const preEntry  = pre.find(e  => e.mint === outputMint && e.owner === walletPubkey);
+
+            // Primary: owner field match (present on most RPCs)
+            let postEntry = post.find(e => e.mint === outputMint && e.owner === walletPubkey);
+            let preEntry  = pre.find( e => e.mint === outputMint && e.owner === walletPubkey);
+
+            // Fallback: owner field absent or mismatched — take the output-mint entry
+            // with the largest positive delta (DEX pool accounts show negative diffs).
+            if (!postEntry) {
+              const candidates = post.filter(e => e.mint === outputMint);
+              let bestDiff = 0;
+              for (const pe of candidates) {
+                const _pre = pre.find(e => e.mint === outputMint && e.accountIndex === pe.accountIndex);
+                const diff = _parseAmt(pe) - _parseAmt(_pre);
+                if (diff > bestDiff) { bestDiff = diff; postEntry = pe; preEntry = _pre; }
+              }
+            }
+
             if (postEntry) {
-              const diff = (postEntry.uiTokenAmount?.uiAmount ?? 0) - (preEntry?.uiTokenAmount?.uiAmount ?? 0);
+              const diff = _parseAmt(postEntry) - _parseAmt(preEntry);
               if (diff > 0) actualOut = diff;
             }
           }
 
           if (actualOut == null) {
-            // Tx confirmed but couldn't parse output — no point retrying
+            // Tx confirmed but balance lookup failed — could be a transient RPC
+            // issue or an ALT-only account not yet resolved. Retry up to 3 times
+            // with increasing delay before giving up.
+            if (attempt < 3) continue;
             window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature, quoteAccuracy: -1 }, '*');
             return;
           }
@@ -632,9 +690,9 @@
   cursor:pointer;transition:filter .15s;white-space:nowrap}.__zq_btn:hover{filter:brightness(1.15)}
 .__zq_cancel{background:rgba(255,255,255,.08);color:#E8E8F0}
 .__zq_proceed{background:#14F195;color:#0F0F1B}.__zq_proceed.amber{background:#FFB547;color:#0F0F1B}.__zq_proceed.orange{background:#FF6B00;color:#fff}.__zq_proceed.red{background:#FF4444;color:#fff}
-.__zq_proceed.__zq_pld{background:rgba(20,241,149,.1);color:rgba(20,241,149,.4);cursor:default;position:relative;overflow:hidden;border:1px solid rgba(20,241,149,.2)}
+.__zq_proceed.__zq_pld{background:rgba(153,69,255,.25);color:#E8E8F0;cursor:pointer;position:relative;overflow:hidden;border:1px solid rgba(153,69,255,.5)}
 .__zq_proceed.__zq_pld::after{content:'';position:absolute;top:0;left:-100%;width:55%;height:100%;
-  background:linear-gradient(90deg,transparent,rgba(20,241,149,.12),transparent);
+  background:linear-gradient(90deg,transparent,rgba(153,69,255,.25),transparent);
   animation:__zq_shimmer 1.5s ease-in-out infinite}
 @keyframes __zq_shimmer{to{left:160%}}
 .__zq_nt{text-align:center;font-size:9.5px;color:#3A3A5A;padding:0 18px 12px}
@@ -798,7 +856,7 @@
           </div>
           <div class="__zq_ai" id="__zq_ai0">
             <button class="__zq_btn __zq_cancel" id="__zq_cancel">✕ Cancel Swap</button>
-            <button class="__zq_btn __zq_proceed ${scanPending ? '__zq_pld' : pCls}" id="__zq_proceed" ${scanPending ? 'data-loading="1"' : ''}>${scanPending ? '⏳ Checking…' : pLbl}</button>
+            <button class="__zq_btn __zq_proceed ${scanPending ? '__zq_pld' : pCls}" id="__zq_proceed">${scanPending ? '✓ Proceed — Checking risk…' : pLbl}</button>
           </div>
           <div class="__zq_nt">Not financial advice · use at own risk</div>
         </div>`;
@@ -839,8 +897,8 @@
       }
 
       backdrop.querySelector('#__zq_cancel').onclick = () => done('cancel');
-      // Proceed is always in the DOM; only wire the click when not loading
-      if (!scanPending) backdrop.querySelector('#__zq_proceed').onclick = () => done('proceed');
+      // Proceed is always clickable — even during the background scan
+      backdrop.querySelector('#__zq_proceed').onclick = () => done('proceed');
       document.body.appendChild(backdrop);
       _wireTips(backdrop);
 

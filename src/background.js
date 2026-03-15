@@ -47,7 +47,8 @@ chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
 // daily_active — at most once per UTC calendar day on any service worker wake
 (function () {
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  chrome.storage.local.get(['_zqlite_last_active_day'], ({ _zqlite_last_active_day }) => {
+  chrome.storage.local.get(['_zqlite_last_active_day'], (result) => {
+    const { _zqlite_last_active_day } = result ?? {};
     if (_zqlite_last_active_day === today) return;
     chrome.storage.local.set({ _zqlite_last_active_day: today });
     _logToBackend('daily_active', { day: today });
@@ -79,7 +80,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then(async r => {
         if (!r.ok) {
           const status = r.status;
-          if (status !== 429 && status !== 503) {
+          if (status !== 429 && status !== 502 && status !== 503) {
             console.error('[ZendIQ Lite] FETCH_JSON error: HTTP', status, msg.url);
           }
           sendResponse({ ok: false, error: 'HTTP ' + status, status });

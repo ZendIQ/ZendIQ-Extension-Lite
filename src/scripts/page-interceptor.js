@@ -657,11 +657,24 @@
       backdrop.innerHTML = `
         <div class="__zq_card">
           <div class="__zq_hd">
-            <svg width="22" height="22" viewBox="0 0 28 28" fill="none">
-              <path d="M14 3L25 8.5V15C25 20.25 20.1 24.9 14 26.5C7.9 24.9 3 20.25 3 15V8.5L14 3Z"
-                fill="rgba(153,69,255,.18)" stroke="#9945FF" stroke-width="1.4"/>
-              <path d="M10 14L13 17L18 11" stroke="#14F195" stroke-width="1.8"
-                stroke-linecap="round" stroke-linejoin="round"/>
+            <svg width="33" height="33" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="__zqlg_r" x1="20%" y1="0%" x2="80%" y2="100%">
+                  <stop offset="0%" stop-color="#00e5ff"/>
+                  <stop offset="35%" stop-color="#5566ff"/>
+                  <stop offset="65%" stop-color="#9922ff"/>
+                  <stop offset="100%" stop-color="#cc44ff"/>
+                </linearGradient>
+                <linearGradient id="__zqlg_i" x1="0%" y1="0%" x2="40%" y2="100%">
+                  <stop offset="0%" stop-color="#aa44ff"/>
+                  <stop offset="100%" stop-color="#cc22ff"/>
+                </linearGradient>
+              </defs>
+              <path d="M 64 14 C 92 13, 114 34, 115 62 C 116 91, 95 113, 66 114 C 37 115, 14 93, 13 64 C 12 38, 30 17, 55 14" fill="none" stroke="#7722ff" stroke-width="14" stroke-linecap="round" opacity="0.2"/>
+              <path d="M 64 15 C 91 14, 113 35, 113 63 C 113 90, 93 112, 65 113 C 37 114, 15 93, 15 65 C 15 39, 33 18, 57 15" fill="none" stroke="url(#__zqlg_r)" stroke-width="9" stroke-linecap="round"/>
+              <path d="M 64 15 C 72 14, 80 15, 87 18" fill="none" stroke="url(#__zqlg_r)" stroke-width="12" stroke-linecap="round" opacity="0.9"/>
+              <path d="M 44 23 C 49 19, 53 16, 58 15" fill="none" stroke="#00e5ff" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+              <text x="65" y="70" font-family="'Arial Black','Helvetica Neue',Arial,sans-serif" font-weight="900" font-size="48" fill="url(#__zqlg_i)" text-anchor="middle" dominant-baseline="middle" letter-spacing="-2">IQ</text>
             </svg>
             <span class="__zq_ht">ZendIQ Lite · Token Risk Check</span>
           </div>

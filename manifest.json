@@ -16,6 +16,7 @@
     "https://api.geckoterminal.com/*",
     "https://api.mainnet-beta.solana.com/*",
     "https://solana.publicnode.com/*",
+    "https://zendiq-backend.onrender.com/*",
     "*://jup.ag/*",
     "*://*.jup.ag/*",
     "*://raydium.io/*",
@@ -78,7 +79,9 @@
     {
       "resources": ["assets/icon-48.png"],
       "matches": [
+        "*://jup.ag/*",
         "*://*.jup.ag/*",
+        "*://raydium.io/*",
         "*://*.raydium.io/*",
         "*://pump.fun/*",
         "*://*.pump.fun/*"

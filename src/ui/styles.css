@@ -501,6 +501,7 @@ input:checked + .slider-amber::before { background: var(--green); }
   display: flex; justify-content: space-between; align-items: center;
 }
 .footer-version { font-family: 'Space Mono', monospace; }
-.footer a { color: var(--purple); text-decoration: none; }
-.footer a:hover { text-decoration: underline; }
+.footer-left { display: inline-flex; align-items: center; gap: 5px; }
+.footer a, .footer-link { color: var(--purple); text-decoration: none; cursor: pointer; }
+.footer a:hover, .footer-link:hover { text-decoration: underline; }
 

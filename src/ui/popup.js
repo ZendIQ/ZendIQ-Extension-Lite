@@ -7,6 +7,11 @@
 document.getElementById('footer-version').textContent =
   'v' + chrome.runtime.getManifest().version;
 
+// Footer website link — target:_blank blocked in extension popups
+document.getElementById('footer-website').addEventListener('click', () => {
+  chrome.tabs.create({ url: 'https://zendiq.ai' });
+});
+
 // ── Shared utilities (global so tab modules can use them) ────────────────────
 function escHtml(s) {
   const d = document.createElement('div');

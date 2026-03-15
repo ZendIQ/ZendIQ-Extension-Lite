@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ZendIQ Lite",
   "version": "0.1.0",
-  "description": "Free Solana swap guardian. Scans token risk and warns you before you sign on Jupiter, Raydium, and Pump.fun. Includes wallet security checker.",
+  "description": "Free Solana swap guardian. Warns you before signing on Jupiter, Raydium & Pump.fun. Token risk scan + wallet security checker.",
   "permissions": [
     "storage",
     "activeTab",

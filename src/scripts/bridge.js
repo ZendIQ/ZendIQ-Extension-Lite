@@ -127,6 +127,22 @@ window.addEventListener('message', (e) => {
     return;
   }
 
+  // ── Onboarding: check if first install ────────────────────────────────────
+  if (d.type === 'ZQLITE_CHECK_ONBOARDED') {
+    chrome.storage.local.get(['zqlite_onboarded'], (r) => {
+      try { window.postMessage({ type: 'ZQLITE_ONBOARDED_RESPONSE', onboarded: !!(r ?? {}).zqlite_onboarded }, '*'); } catch (_) {}
+    });
+    return;
+  }
+
+  // ── Onboarding complete: mark done + store pending tab + open popup ────────
+  if (d.type === 'ZQLITE_ONBOARDING_COMPLETE') {
+    chrome.storage.local.set({ zqlite_onboarded: true, zqlite_pending_tab: 'security' }, () => {
+      try { chrome.runtime.sendMessage({ type: 'OPEN_POPUP' }, () => void chrome.runtime.lastError); } catch (_) {}
+    });
+    return;
+  }
+
   // ── Log event → backend (via background LOG_EVENT handler) —————————————
   if (d.type === 'ZQLITE_LOG_EVENT') {
     const { eventType, data } = d;

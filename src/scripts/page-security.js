@@ -35,6 +35,18 @@
       if (window.solana?.isGlow)                                            return 'glow';
       if (window.solana?.isBrave || window.braveSolana)                    return 'brave';
       if (window.solana?.isCoin98)                                          return 'coin98';
+      if (window.jupiterWallet || window.solana?.isJupiter)                return 'jupiter';
+      // Wallet Standard wallets (Jupiter, Coinbase, etc.) — detected via __zqlite._wsWallet
+      const wsName = ns._wsWallet?.name ?? null;
+      if (wsName) {
+        const n = wsName.toLowerCase();
+        if (n.includes('jupiter'))  return 'jupiter';
+        if (n.includes('phantom'))  return 'phantom';
+        if (n.includes('backpack')) return 'backpack';
+        if (n.includes('solflare')) return 'solflare';
+        if (n.includes('glow'))     return 'glow';
+        if (n.includes('brave'))    return 'brave';
+      }
       return 'unknown';
     } catch (_) { return 'unknown'; }
   }
@@ -98,6 +110,7 @@
       const AUTO_APPROVE_WARNINGS = {
         phantom:  { text: 'Action required: check & disable Phantom auto-approve', detail: 'Disable auto-approve for all dApps — it lets sites sign transactions silently without a popup.', steps: 'Phantom → Settings → Security & Privacy → Trusted Apps → disable auto-approve', tooltip: 'RISK: Auto-approve lets malicious scripts sign transactions without showing you a confirmation popup.', reviewable: true },
         backpack: { text: 'Action required: check & disable Backpack transaction approvals', detail: 'Disable pre-approved dApps — they can sign transactions silently without a confirmation popup.', steps: 'Backpack → Settings → Security → Transaction Approval → remove pre-approved dApps', tooltip: 'RISK: Pre-approved dApps can sign transactions silently and drain your wallet.', reviewable: true },
+        jupiter:  { text: 'Action required: check & disable Jupiter Wallet auto-approve', detail: 'Disable Auto Approve and Skip Review — these bypass confirmation popups and are a drain risk.', steps: 'Jupiter Wallet → ⋮ (top right) → Manage Settings → Preferences: Auto Approve = Disabled, Skip Review = Disabled → Security → Connected Apps → remove unrecognised sites.', tooltip: 'RISK: Jupiter Wallet\'s "Auto Approve" silently signs transactions without a popup. "Skip Review" skips the transaction review screen. Either can be exploited by a malicious connected site.', reviewable: true },
         solflare: { text: 'Action required: check & disable Solflare auto-sign sessions', detail: 'Disable active auto-sign sessions — they allow sites to submit transactions without your confirmation.', steps: 'Solflare → Settings → Security → Auto-sign → revoke any sessions', tooltip: 'RISK: Auto-sign sessions let connected sites submit signed transactions at any time.', reviewable: true },
         glow:     { text: 'Action required: check & disable Glow connected apps', detail: 'Disable signing rights for connected apps — they can submit transactions without a per-transaction popup.', steps: 'Glow → Settings → Connected Apps → remove signing rights', tooltip: 'RISK: Apps with signing rights can submit transactions without a per-transaction popup.', reviewable: true },
         brave:    { text: 'Action required: check & disable Brave Wallet dApp connections', detail: 'Disable authorised site connections — they can request transaction signatures at any time.', steps: 'Brave → Crypto Wallets → Sites with access → revoke authorised dApps', tooltip: 'RISK: Authorised sites can request transaction signatures at any time.', reviewable: true },

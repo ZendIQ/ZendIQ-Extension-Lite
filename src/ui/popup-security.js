@@ -97,7 +97,7 @@ function renderSecurityPanel() {
         ${!walletPubkey ? `
         <div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:10.5px;color:var(--muted);line-height:1.7">
           <div style="font-weight:700;color:var(--text);margin-bottom:5px">How to enable the wallet scan:</div>
-          <div style="margin-bottom:4px">1. Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--purple);font-weight:700;text-decoration:none">jup.ag</a> in this browser and connect your wallet.</div>
+          <div style="margin-bottom:4px">1. Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--purple);font-weight:700;text-decoration:none">jup.ag</a>, <a href="https://raydium.io" target="_blank" rel="noopener" style="color:var(--purple);font-weight:700;text-decoration:none">raydium.io</a>, or pump.fun and connect your wallet.</div>
           <div style="margin-bottom:4px">2. ZendIQ reads your <strong style="color:var(--text)">public address</strong> from the page — no wallet added to ZendIQ.</div>
           <div>3. Return here and click <strong style="color:var(--text)">Run Security Check</strong>.</div>
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:var(--text)">
@@ -214,7 +214,7 @@ function renderSecurityPanel() {
     ${walletBar}
     ${_secWalletMissing ? `
     <div style="margin:0 0 10px;padding:8px 12px;border-radius:7px;background:rgba(255,181,71,0.08);border:1px solid rgba(255,181,71,0.25);font-size:10.5px;color:var(--orange);line-height:1.6">
-      ⚠ Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--orange);font-weight:700;text-decoration:underline">jup.ag</a> and connect your wallet, then click Re-check to refresh this scan.
+      ⚠ Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--orange);font-weight:700;text-decoration:underline">jup.ag</a>, <a href="https://raydium.io" target="_blank" rel="noopener" style="color:var(--orange);font-weight:700;text-decoration:underline">raydium.io</a>, or pump.fun and connect your wallet, then click Re-check.
     </div>` : ''}
     <div class="section">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px">
@@ -296,7 +296,11 @@ async function runCheck() {
   if (!walletPubkey) {
     try {
       const jTabs = await new Promise(res =>
-        chrome.tabs.query({ url: ['*://jup.ag/*', '*://*.jup.ag/*'] }, ts => res(ts ?? []))
+        chrome.tabs.query({ url: [
+          '*://jup.ag/*', '*://*.jup.ag/*',
+          '*://raydium.io/*', '*://*.raydium.io/*',
+          '*://pump.fun/*', '*://*.pump.fun/*',
+        ] }, ts => res(ts ?? []))
       );
       if (jTabs.length) {
         const [r] = await chrome.scripting.executeScript({
@@ -352,7 +356,7 @@ async function runCheck() {
     _secResult = {
       score: null, checkedAt: Date.now(), pubkey: null, walletType: 'unknown',
       totalAccounts: 0, unlimitedApprovals: [], badContracts: [], autoApproveDeduction: 0,
-      findings: [{ severity: 'WARN', text: 'No wallet detected', detail: 'Visit jup.ag and connect your wallet — ZendIQ will detect the public address automatically.' }],
+      findings: [{ severity: 'WARN', text: 'No wallet detected', detail: 'Connect your wallet on Jupiter, Raydium, or Pump.fun — ZendIQ will detect the public address automatically.' }],
     };
     renderSecurityPanel();
     return;
@@ -461,7 +465,11 @@ async function runCheck() {
     // Detect wallet type via page probe (scripting permission required)
     let detectedType = _secResult?.walletType ?? 'unknown';
     try {
-      const tabs = await new Promise(res => chrome.tabs.query({ url: '*://*.jup.ag/*', active: true }, ts => res(ts ?? [])));
+      const tabs = await new Promise(res => chrome.tabs.query({ url: [
+        '*://jup.ag/*', '*://*.jup.ag/*',
+        '*://raydium.io/*', '*://*.raydium.io/*',
+        '*://pump.fun/*', '*://*.pump.fun/*',
+      ] }, ts => res(ts ?? [])));
       const [tab] = tabs;
       if (tab) {
         const [result] = await chrome.scripting.executeScript({

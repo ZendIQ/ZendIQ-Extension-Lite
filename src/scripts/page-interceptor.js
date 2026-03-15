@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ZendIQ Lite — page-interceptor.js
  * Runs in MAIN world at document_start.
  *
@@ -54,6 +54,37 @@
     }
   }
 
+  // ── Raydium: extract mint from page URL immediately ───────────────────────
+  // raydium.io/swap/?inputMint=sol&outputMint=<MINT> encodes both mints in the
+  // query string.  Reading it here gives a ~1–3s head-start for proactive scoring
+  // before the user can click Swap.  Raydium is a SPA — we also intercept
+  // pushState/replaceState/popstate so pair changes are captured live.
+  if (location.hostname.includes('raydium.io')) {
+    const _SOL_MINT = 'So11111111111111111111111111111111111111112';
+    const _rdmExtract = () => {
+      try {
+        const p  = new URLSearchParams(location.search);
+        const raw = p.get('outputMint') ?? p.get('quoteMint') ?? p.get('mintB');
+        if (!raw) return;
+        const mint = raw.toLowerCase() === 'sol' ? _SOL_MINT : raw;
+        if (!mint || mint === ns.lastOutputMint) return;
+        ns.lastOutputMint = mint;
+        Promise.resolve().then(() => _probeScore(mint));
+      } catch (_) {}
+    };
+    _rdmExtract(); // fire immediately on page load
+    // Patch history methods so SPA navigation (pair change) re-extracts the mint.
+    (['pushState', 'replaceState']).forEach(m => {
+      const _orig = history[m].bind(history);
+      history[m] = function (...args) {
+        const res = _orig(...args);
+        _rdmExtract();
+        return res;
+      };
+    });
+    window.addEventListener('popstate', _rdmExtract, { passive: true });
+  }
+
   const _origFetch = window.fetch.bind(window);
   window.fetch = function (resource, opts) {
     const url = resource instanceof Request ? resource.url : String(resource ?? '');
@@ -90,14 +121,28 @@
           }
         }).catch(() => {})).catch(() => {});
       }
-      // Raydium compute / swap endpoint
-      if (/raydium\.io/.test(url) && /\/(compute|swap)/.test(url)) {
+      // Raydium compute / swap / quote API
+      // Catches api-v3.raydium.io, transaction.raydium.io, etc.
+      // Path patterns: /main/route-compute, /swap, /batch-compute, /quote …
+      // Also catches any URL with a mint query param regardless of path shape.
+      if (/raydium\.io/.test(url) && (
+        /\/(compute|swap|quote|route|order|batch)/.test(url)
+        || /[?&](inputMint|outputMint|mintA|mintB|quoteMint|baseMint)=/.test(url)
+      )) {
         const u = new URL(url, location.origin);
-        const out = u.searchParams.get('outputMint') ?? u.searchParams.get('mintB');
+        const out = u.searchParams.get('outputMint') ?? u.searchParams.get('quoteMint') ?? u.searchParams.get('mintB');
         if (out) { ns.lastOutputMint = out; _probeScore(out); }
+        // For POST requests, also parse request body for mints
+        if (!out && (opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body) {
+          try {
+            const _rb = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+            const _bodyMint = _rb?.outputMint ?? _rb?.quoteMint ?? _rb?.mintB ?? null;
+            if (_bodyMint) { ns.lastOutputMint = _bodyMint; _probeScore(_bodyMint); }
+          } catch (_) {}
+        }
         // Also check response body (Raydium sometimes puts mints in the JSON response)
         resp.then(r => r.clone().json().then(d => {
-          const m = d?.data?.outputMint ?? d?.outputMint;
+          const m = d?.data?.outputMint ?? d?.outputMint ?? d?.data?.quoteMint ?? d?.data?.mintB;
           if (m && m !== ns.lastOutputMint) { ns.lastOutputMint = m; _probeScore(m); }
         }).catch(() => {})).catch(() => {});
       }
@@ -166,6 +211,10 @@
         } catch (_) {}
       }
     } catch (_) {}
+    // Attach a silent no-op catch so the browser doesn't flag a brief
+    // "unhandled rejection" window before the original caller's .catch() runs.
+    // We still return the original `resp` so callers receive the real rejection.
+    resp.catch(() => {});
     return resp;
   };
 
@@ -307,8 +356,9 @@
     const btn = e.target?.closest?.('button, [role="button"]');
     if (!btn) return;
     const txt = (btn.textContent ?? '').trim().replace(/\s+/g, ' ');
-    // Jupiter / Raydium: "Swap" or "Confirm Swap"
-    const _isSwapBtn = /^(confirm\s+)?swap$/i.test(txt);
+    // Jupiter / Raydium: "Swap", "Confirm Swap", "Swap Now", "Confirm Swap"
+    const _isSwapBtn = /^(confirm\s+)?(swap|swap now|swap confirm)$/i.test(txt)
+      || (location.hostname.includes('raydium') && /^(swap|confirm)/i.test(txt) && txt.length <= 20);
     // Pump.fun: "Buy [TokenName]" or "Place Trade" — only when a mint is known.
     // Requires a token name after "Buy" so the Buy/Sell toggle tab (bare "Buy") doesn't trigger.
     const _isPumpBuy = location.hostname.includes('pump.fun')
@@ -321,8 +371,14 @@
     e.preventDefault();
 
     const mint = ns.lastOutputMint;
-    const score = (mint && ns.lastTokenScore?.mint === mint && ns.lastTokenScore?.loaded)
-      ? ns.lastTokenScore : null;
+    // Validate cached score — reject results with unrecognised level or no factors
+    // (can happen after extension reload mid-session; forces a fresh fetch via overlay)
+    const _KNOWN_LEVELS = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+    const _cachedOk = mint && ns.lastTokenScore?.mint === mint
+      && ns.lastTokenScore?.loaded
+      && _KNOWN_LEVELS.has(ns.lastTokenScore?.level)
+      && (ns.lastTokenScore?.factors?.length ?? 0) > 0;
+    const score = _cachedOk ? ns.lastTokenScore : null;
 
     // If score not yet cached: reuse the proactive in-flight promise if available,
     // otherwise start a fresh fetch. An 18s safety timeout prevents the overlay
@@ -354,11 +410,17 @@
         ]);
       }
     } else if (mint) {
+      // Score exists — start a silent background refresh so the overlay can update
+      // if the cached result is shown but a newer score arrives (e.g. stale data).
       _ensureScoring();
       if (typeof fetchTokenScore === 'function' && !_scoreInFlight.has(mint)) {
-        fetchTokenScore(mint)
-          .then(r => { if (r) { ns.lastTokenScore = r; window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result: r, ts: Date.now(), site: location.hostname } }, '*'); } })
-          .catch(() => {});
+        _scorePromise = Promise.race([
+          fetchTokenScore(mint).then(r => {
+            if (r) { ns.lastTokenScore = r; window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result: r, ts: Date.now(), site: location.hostname } }, '*'); }
+            return r ?? null;
+          }).catch(() => null),
+          new Promise(r => setTimeout(() => r(null), 14000)),
+        ]);
       }
     }
 
@@ -422,11 +484,13 @@
 
     const mint = ns.lastOutputMint;
 
-    // Use only the proactively-cached score — no blocking async fetch before showing overlay.
-    // _probeScore() fires immediately when any /order request is intercepted, so by the
-    // time the user can click Swap the score is normally already cached.
-    const score = (mint && ns.lastTokenScore?.mint === mint && ns.lastTokenScore?.loaded)
-      ? ns.lastTokenScore : null;
+    // Validate cached score — reject stale results with unknown level or empty factors.
+    const _KL2 = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);
+    const _cachedOk2 = mint && ns.lastTokenScore?.mint === mint
+      && ns.lastTokenScore?.loaded
+      && _KL2.has(ns.lastTokenScore?.level)
+      && (ns.lastTokenScore?.factors?.length ?? 0) > 0;
+    const score = _cachedOk2 ? ns.lastTokenScore : null;
 
     // If score not yet cached: reuse the proactive in-flight promise if available,
     // otherwise start a fresh fetch. 18s safety timeout.
@@ -456,16 +520,20 @@
         ]);
       }
     } else if (mint) {
+      // Score exists — start a silent background refresh so the overlay can update
+      // if stale data or a newer score arrives.
       _ensureScoring();
       if (typeof fetchTokenScore === 'function' && !_scoreInFlight.has(mint)) {
-        fetchTokenScore(mint)
-          .then(r => {
+        _scorePromise = Promise.race([
+          fetchTokenScore(mint).then(r => {
             if (r) {
               ns.lastTokenScore = r;
               window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result: r, ts: Date.now(), site: host } }, '*');
             }
-          })
-          .catch(() => {});
+            return r ?? null;
+          }).catch(() => null),
+          new Promise(r => setTimeout(() => r(null), 14000)),
+        ]);
       }
     }
 
@@ -541,11 +609,20 @@
   cursor:pointer;transition:filter .15s;white-space:nowrap}.__zq_btn:hover{filter:brightness(1.15)}
 .__zq_cancel{background:rgba(255,255,255,.08);color:#E8E8F0}
 .__zq_proceed{background:#14F195;color:#0F0F1B}.__zq_proceed.amber{background:#FFB547;color:#0F0F1B}.__zq_proceed.orange{background:#FF6B00;color:#fff}.__zq_proceed.red{background:#FF4444;color:#fff}
+.__zq_proceed.__zq_pld{background:rgba(20,241,149,.1);color:rgba(20,241,149,.4);cursor:default;position:relative;overflow:hidden;border:1px solid rgba(20,241,149,.2)}
+.__zq_proceed.__zq_pld::after{content:'';position:absolute;top:0;left:-100%;width:55%;height:100%;
+  background:linear-gradient(90deg,transparent,rgba(20,241,149,.12),transparent);
+  animation:__zq_shimmer 1.5s ease-in-out infinite}
+@keyframes __zq_shimmer{to{left:160%}}
 .__zq_nt{text-align:center;font-size:9.5px;color:#3A3A5A;padding:0 18px 12px}
-.__zq_ld{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;
-  background:rgba(255,255,255,.03);font-size:10.5px;color:#6B6B8A}
-.__zq_spin{width:10px;height:10px;border:1.5px solid rgba(255,255,255,.12);
-  border-top-color:#9945FF;border-radius:50%;animation:__zq_spin .7s linear infinite;flex-shrink:0}
+.__zq_prog{height:2px;background:rgba(255,255,255,.04);flex-shrink:0}
+.__zq_prog_bar{height:100%;background:linear-gradient(90deg,#9945FF,#14F195);animation:__zq_pb 1.8s ease-in-out infinite alternate}
+@keyframes __zq_pb{from{width:10%;margin-left:0}to{width:55%;margin-left:35%}}
+.__zq_ld{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;
+  background:rgba(153,69,255,.08);border:1px solid rgba(153,69,255,.2);font-size:10.5px;color:#B8A8E0}
+.__zq_ld_sub{font-size:9.5px;color:#6B5A8A;margin-top:2px}
+.__zq_spin{width:14px;height:14px;border:2px solid rgba(153,69,255,.2);
+  border-top-color:#9945FF;border-radius:50%;animation:__zq_spin .75s linear infinite;flex-shrink:0}
 @keyframes __zq_spin{to{transform:rotate(360deg)}}
 .__zq_bot{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;
   background:rgba(255,68,68,.13);border:1px solid rgba(255,68,68,.45);
@@ -651,13 +728,22 @@
       const pCls  = _proceedClass(score);
       const pLbl  = _proceedLabel(score);
       const _botF = _botFactor(score);
+      // Loading scan rows — shown in place of factor list while data is in flight
+      const _scanRows = `
+        <div class="__zq_ld">
+          <div style="display:flex;flex-direction:column;gap:2px;flex:1">
+            <span style="font-weight:700">Downloading token data…</span>
+            <span class="__zq_ld_sub">Checking on-chain supply · RugCheck · DexScreener</span>
+          </div>
+          <div class="__zq_spin"></div>
+        </div>`;
 
       const backdrop = document.createElement('div');
       backdrop.id = '__zqlite_bd';
       backdrop.innerHTML = `
         <div class="__zq_card">
           <div class="__zq_hd">
-            <svg width="33" height="33" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- logo svg --><svg width="33" height="33" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
               <defs>
                 <linearGradient id="__zqlg_r" x1="20%" y1="0%" x2="80%" y2="100%">
                   <stop offset="0%" stop-color="#00e5ff"/>
@@ -678,17 +764,18 @@
             </svg>
             <span class="__zq_ht">ZendIQ Lite · Token Risk Check</span>
           </div>
+          ${scanPending ? '<div class="__zq_prog" id="__zq_prog"><div class="__zq_prog_bar"></div></div>' : ''}
           <div class="__zq_body">
             ${_buildBotBanner(_botF)}
             <div class="__zq_sr" style="${_botF ? 'margin-top:10px' : ''}">
               <span class="__zq_sn" id="__zq_num" style="color:${col}">${num}</span>
               <span class="__zq_sp" id="__zq_badge" style="color:${col};border-color:${col}40">${label} · ${num}/100</span>
             </div>
-            <div class="__zq_fl" id="__zq_fl0">${scanPending ? '<div class="__zq_ld"><div class="__zq_spin"></div><span>Fetching on-chain data…</span></div>' : _buildFactors(score)}</div>
+            <div class="__zq_fl" id="__zq_fl0">${scanPending ? _scanRows : _buildFactors(score)}</div>
           </div>
           <div class="__zq_ai" id="__zq_ai0">
             <button class="__zq_btn __zq_cancel" id="__zq_cancel">✕ Cancel Swap</button>
-            ${!scanPending ? `<button class="__zq_btn __zq_proceed ${pCls}" id="__zq_proceed">${pLbl}</button>` : ''}
+            <button class="__zq_btn __zq_proceed ${scanPending ? '__zq_pld' : pCls}" id="__zq_proceed" ${scanPending ? 'data-loading="1"' : ''}>${scanPending ? '⏳ Checking…' : pLbl}</button>
           </div>
           <div class="__zq_nt">Not financial advice · use at own risk</div>
         </div>`;
@@ -729,9 +816,23 @@
       }
 
       backdrop.querySelector('#__zq_cancel').onclick = () => done('cancel');
-      if (!scanPending) backdrop.querySelector('#__zq_proceed')?.addEventListener('click', () => done('proceed'));
+      // Proceed is always in the DOM; only wire the click when not loading
+      if (!scanPending) backdrop.querySelector('#__zq_proceed').onclick = () => done('proceed');
       document.body.appendChild(backdrop);
       _wireTips(backdrop);
+
+      // Enable the Proceed button in-place (was rendered in loading state initially)
+      function _activateProceed(sc) {
+        const btn = backdrop.querySelector('#__zq_proceed');
+        if (!btn) return;
+        btn.removeAttribute('data-loading');
+        btn.classList.remove('__zq_pld');
+        const cls2 = _proceedClass(sc);
+        if (cls2) btn.classList.add(cls2);
+        btn.textContent = _proceedLabel(sc);
+        btn.onclick = () => done('proceed');
+        backdrop.querySelector('#__zq_prog')?.remove();
+      }
 
       if (scorePromise) {
         // Scan in flight — update card when result arrives, then add Proceed button
@@ -759,34 +860,13 @@
           const flEl = backdrop.querySelector('#__zq_fl0');
           if (flEl) { flEl.innerHTML = _buildFactors(freshScore ?? null); _wireTips(flEl); }
 
-          // Add Proceed only when this is the final result (fullPromise not pending)
+          // Activate Proceed when this is the final result (fullPromise not pending)
           if (!fullPromise || !freshScore?._deployerPending) {
-            const aiEl = backdrop.querySelector('#__zq_ai0');
-            if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
-              const pCls2 = _proceedClass(freshScore);
-              const pLbl2 = _proceedLabel(freshScore);
-              const btn2 = document.createElement('button');
-              btn2.className = `__zq_btn __zq_proceed ${pCls2}`;
-              btn2.id = '__zq_proceed';
-              btn2.textContent = pLbl2;
-              btn2.onclick = () => done('proceed');
-              aiEl.appendChild(btn2);
-            }
+            _activateProceed(freshScore);
           }
         }).catch(() => {
-          // Timed out or failed — only add Proceed if fullPromise won’t
-          if (!fullPromise) {
-            if (!backdrop.isConnected) return;
-            const aiEl = backdrop.querySelector('#__zq_ai0');
-            if (aiEl && !aiEl.querySelector('#__zq_proceed')) {
-              const btn2 = document.createElement('button');
-              btn2.className = '__zq_btn __zq_proceed';
-              btn2.id = '__zq_proceed';
-              btn2.textContent = 'Proceed Anyway →';
-              btn2.onclick = () => done('proceed');
-              aiEl.appendChild(btn2);
-            }
-          }
+          if (!backdrop.isConnected) return;
+          if (!fullPromise) _activateProceed(null);
         });
       }
 
@@ -810,29 +890,10 @@
           }
           const flElF = backdrop.querySelector('#__zq_fl0');
           if (flElF) { flElF.innerHTML = _buildFactors(finalScore ?? null); _wireTips(flElF); }
-          const aiElF = backdrop.querySelector('#__zq_ai0');
-          if (aiElF && !aiElF.querySelector('#__zq_proceed')) {
-            const pClsF = _proceedClass(finalScore);
-            const pLblF = _proceedLabel(finalScore);
-            const btnF  = document.createElement('button');
-            btnF.className = `__zq_btn __zq_proceed ${pClsF}`;
-            btnF.id = '__zq_proceed';
-            btnF.textContent = pLblF;
-            btnF.onclick = () => done('proceed');
-            aiElF.appendChild(btnF);
-          }
+          _activateProceed(finalScore);
         }).catch(() => {
-          // Deployer lookup failed — add fallback Proceed so user isn’t blocked
           if (!backdrop.isConnected) return;
-          const aiElF = backdrop.querySelector('#__zq_ai0');
-          if (aiElF && !aiElF.querySelector('#__zq_proceed')) {
-            const btnF = document.createElement('button');
-            btnF.className = '__zq_btn __zq_proceed';
-            btnF.id = '__zq_proceed';
-            btnF.textContent = 'Proceed Anyway →';
-            btnF.onclick = () => done('proceed');
-            aiElF.appendChild(btnF);
-          }
+          _activateProceed(null);
         });
       }
     });
@@ -877,4 +938,133 @@
     if (typeof ns.scanAndWrapGlobalWallets === 'function') ns.scanAndWrapGlobalWallets();
   }, 250);
   setTimeout(() => clearInterval(_scanInt), 5000);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // 6. ONBOARDING OVERLAY (first install only)
+  // ══════════════════════════════════════════════════════════════════════════
+  const _OB_CSS = `
+#__zqlite_ob{position:fixed;inset:0;background:rgba(0,0,0,.82);backdrop-filter:blur(6px);
+  z-index:2147483646;display:flex;align-items:center;justify-content:center;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;animation:__zq_fade .22s ease}
+.__zq_ob_card{background:#0F0F1B;border:1px solid rgba(153,69,255,.4);border-radius:18px;
+  width:440px;max-width:calc(100vw - 24px);max-height:90vh;display:flex;flex-direction:column;
+  box-shadow:0 28px 60px rgba(0,0,0,.92),inset 0 1px 0 rgba(255,255,255,.04)}
+.__zq_ob_hd{padding:18px 20px 14px;border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.__zq_ob_logo{width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,rgba(153,69,255,.2),rgba(20,241,149,.08));border:1px solid rgba(153,69,255,.35);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.__zq_ob_htx{flex:1}
+.__zq_ob_h1{font-size:15px;font-weight:900;background:linear-gradient(90deg,#00e5ff 0%,#9945FF 55%,#14F195 100%);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:1px}
+.__zq_ob_sub{font-size:10px;color:#6B6B8A}
+.__zq_ob_body{padding:14px 18px 6px;overflow-y:auto;flex:1}
+.__zq_ob_steps{display:flex;flex-direction:column;gap:7px;margin-bottom:12px}
+.__zq_ob_step{display:flex;align-items:flex-start;gap:11px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:11px;padding:11px 13px}
+.__zq_ob_num{flex-shrink:0;width:24px;height:24px;border-radius:50%;background:rgba(153,69,255,.15);border:1px solid rgba(153,69,255,.4);color:#9945FF;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center}
+.__zq_ob_stxt{flex:1}
+.__zq_ob_stitle{font-size:11.5px;font-weight:700;color:#E8E8F0;margin-bottom:2px}
+.__zq_ob_sdesc{font-size:10px;color:#6B6B8A;line-height:1.55}
+.__zq_ob_chips{display:flex;gap:7px;justify-content:center;flex-wrap:wrap;margin-bottom:14px}
+.__zq_ob_chip{font-size:10px;font-weight:700;padding:4px 13px;border-radius:20px;background:rgba(20,241,149,.07);color:#14F195;border:1px solid rgba(20,241,149,.22)}
+.__zq_ob_foot{padding:10px 18px 16px;border-top:1px solid rgba(255,255,255,.07);flex-shrink:0}
+.__zq_ob_btn{width:100%;padding:13px;background:linear-gradient(135deg,#9945FF,#14F195);border:none;border-radius:12px;color:#000;font-size:13px;font-weight:800;cursor:pointer;transition:opacity .15s;letter-spacing:.2px}
+.__zq_ob_btn:hover{opacity:.85}
+.__zq_ob_note{text-align:center;font-size:9px;color:#3A3A5A;margin-top:8px;line-height:1.6}
+`;
+
+  function _showOnboardingOverlay() {
+    if (document.getElementById('__zqlite_ob')) return;
+    const styleEl = document.createElement('style');
+    styleEl.textContent = _OB_CSS;
+    document.head.appendChild(styleEl);
+
+    const el = document.createElement('div');
+    el.id = '__zqlite_ob';
+    el.innerHTML = `
+      <div class="__zq_ob_card">
+        <div class="__zq_ob_hd">
+          <div class="__zq_ob_logo">
+            <svg width="28" height="28" viewBox="0 0 128 128" fill="none">
+              <defs>
+                <linearGradient id="__zqob_r" x1="20%" y1="0%" x2="80%" y2="100%">
+                  <stop offset="0%" stop-color="#00e5ff"/>
+                  <stop offset="50%" stop-color="#9922ff"/>
+                  <stop offset="100%" stop-color="#cc44ff"/>
+                </linearGradient>
+                <linearGradient id="__zqob_i" x1="0%" y1="0%" x2="40%" y2="100%">
+                  <stop offset="0%" stop-color="#aa44ff"/>
+                  <stop offset="100%" stop-color="#cc22ff"/>
+                </linearGradient>
+              </defs>
+              <path d="M 64 15 C 91 14, 113 35, 113 63 C 113 90, 93 112, 65 113 C 37 114, 15 93, 15 65 C 15 39, 33 18, 57 15" fill="none" stroke="url(#__zqob_r)" stroke-width="9" stroke-linecap="round"/>
+              <text x="65" y="70" font-family="'Arial Black',Arial,sans-serif" font-weight="900" font-size="48" fill="url(#__zqob_i)" text-anchor="middle" dominant-baseline="middle" letter-spacing="-2">IQ</text>
+            </svg>
+          </div>
+          <div class="__zq_ob_htx">
+            <div class="__zq_ob_h1">Welcome to ZendIQ Lite</div>
+            <div class="__zq_ob_sub">Your free Solana swap guardian — here's how to get started</div>
+          </div>
+        </div>
+        <div class="__zq_ob_body">
+          <div class="__zq_ob_steps">
+            <div class="__zq_ob_step">
+              <div class="__zq_ob_num">1</div>
+              <div class="__zq_ob_stxt">
+                <div class="__zq_ob_stitle">Run your wallet security check</div>
+                <div class="__zq_ob_sdesc">Click <strong style="color:#E8E8F0">Get Started</strong> below to open the ZendIQ popup. Head to the <strong style="color:#E8E8F0">Wallet</strong> tab and scan for dangerous token approvals and auto-sign settings.</div>
+              </div>
+            </div>
+            <div class="__zq_ob_step">
+              <div class="__zq_ob_num">2</div>
+              <div class="__zq_ob_stxt">
+                <div class="__zq_ob_stitle">Trade as normal</div>
+                <div class="__zq_ob_sdesc">Stay on Jupiter, Raydium, or Pump.fun and start a swap as you always have. ZendIQ works silently in the background.</div>
+              </div>
+            </div>
+            <div class="__zq_ob_step">
+              <div class="__zq_ob_num">3</div>
+              <div class="__zq_ob_stxt">
+                <div class="__zq_ob_stitle">ZendIQ scans the token</div>
+                <div class="__zq_ob_sdesc">Before you sign, we check 15 on-chain signals — mint authority, holder concentration, rug flags, LP lock, deployer history, and more.</div>
+              </div>
+            </div>
+            <div class="__zq_ob_step">
+              <div class="__zq_ob_num">4</div>
+              <div class="__zq_ob_stxt">
+                <div class="__zq_ob_stitle">You decide with full context</div>
+                <div class="__zq_ob_sdesc">A risk overlay shows the score and key factors. Cancel if it looks risky, or proceed knowing the real picture.</div>
+              </div>
+            </div>
+          </div>
+          <div class="__zq_ob_chips">
+            <span class="__zq_ob_chip">Jupiter</span>
+            <span class="__zq_ob_chip">Raydium</span>
+            <span class="__zq_ob_chip">Pump.fun</span>
+          </div>
+        </div>
+        <div class="__zq_ob_foot">
+          <button class="__zq_ob_btn" id="__zq_ob_start">Get Started &rarr;</button>
+          <div class="__zq_ob_note">Free forever &nbsp;&middot;&nbsp; No wallet address stored &nbsp;&middot;&nbsp; Open source</div>
+        </div>
+      </div>`;
+
+    document.body.appendChild(el);
+
+    el.querySelector('#__zq_ob_start').onclick = () => {
+      el.remove();
+      styleEl.remove();
+      window.postMessage({ type: 'ZQLITE_ONBOARDING_COMPLETE' }, '*');
+    };
+  }
+
+  // Check onboarded state via bridge and show overlay if first install
+  window.postMessage({ type: 'ZQLITE_CHECK_ONBOARDED' }, '*');
+  window.addEventListener('message', function _onbHandler(e) {
+    if (!e.data || e.data.type !== 'ZQLITE_ONBOARDED_RESPONSE') return;
+    window.removeEventListener('message', _onbHandler);
+    if (!e.data.onboarded) {
+      if (document.body) {
+        _showOnboardingOverlay();
+      } else {
+        document.addEventListener('DOMContentLoaded', _showOnboardingOverlay, { once: true });
+      }
+    }
+  });
 })();

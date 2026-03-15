@@ -60,8 +60,19 @@
       try { wallet.sendTransaction = (...a) => ns.handleTransaction(a[0], a[1] ?? {}, realSend, 'sendTransaction'); } catch (_) {}
     }
 
+    // Resolve immediately + on connect/accountChanged events (Raydium uses autoConnect
+    // which fires 2–8s after page load, well outside the original 400ms/2000ms window).
+    const _onConnect = () => {
+      setTimeout(ns.resolveWalletPubkey, 50);
+      setTimeout(ns.resolveWalletPubkey, 500);
+    };
+    try { wallet.on?.('connect',        _onConnect); } catch (_) {}
+    try { wallet.on?.('accountChanged', _onConnect); } catch (_) {}
+
     setTimeout(ns.resolveWalletPubkey, 400);
     setTimeout(ns.resolveWalletPubkey, 2000);
+    setTimeout(ns.resolveWalletPubkey, 4500);
+    setTimeout(ns.resolveWalletPubkey, 9000);
   }
 
   // ── Wallet Standard hook ──────────────────────────────────────────────────
@@ -111,6 +122,14 @@
     } catch (_) {}
 
     if (account?.address) _savePubkey(account.address);
+
+    // Subscribe to account changes (wallet connect / switch) for Wallet Standard
+    try {
+      w.features?.['standard:events']?.on?.('change', ({ accounts }) => {
+        const addr = accounts?.[0]?.address;
+        if (addr) { _savePubkey(addr); ns._wsAccount = accounts[0]; }
+      });
+    } catch (_) {}
   }
 
   // ── Global scan fallback — sweep window.* for any wallet-like objects ────

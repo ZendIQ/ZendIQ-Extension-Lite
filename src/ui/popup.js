@@ -64,8 +64,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   tabBtns.forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tab)));
 
-  // ── Initial load ──────────────────────────────────────────────────────────
-  showTab('monitor');
+  // ── Initial load: honour pending tab from onboarding / bridge ───────────
+  chrome.storage.local.get(['zqlite_pending_tab'], ({ zqlite_pending_tab }) => {
+    if (zqlite_pending_tab) {
+      chrome.storage.local.remove(['zqlite_pending_tab']);
+      showTab(zqlite_pending_tab);
+    } else {
+      showTab('monitor');
+    }
+  });
 
   // ── Live storage updates (e.g. new scan from content script) ─────────────
   chrome.storage.onChanged.addListener((changes) => {

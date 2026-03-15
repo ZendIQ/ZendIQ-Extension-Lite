@@ -140,10 +140,28 @@
             if (_bodyMint) { ns.lastOutputMint = _bodyMint; _probeScore(_bodyMint); }
           } catch (_) {}
         }
-        // Also check response body (Raydium sometimes puts mints in the JSON response)
+        // Also check response body (Raydium sometimes puts mints + amounts in the JSON response)
         resp.then(r => r.clone().json().then(d => {
           const m = d?.data?.outputMint ?? d?.outputMint ?? d?.data?.quoteMint ?? d?.data?.mintB;
           if (m && m !== ns.lastOutputMint) { ns.lastOutputMint = m; _probeScore(m); }
+          // Capture quoted output amount for Quote Accuracy (route-compute / compute response)
+          // Raydium v3: d.data.outputAmount (raw integer string)
+          const rawOut = d?.data?.outputAmount ?? d?.data?.amountOut ?? d?.data?.outAmount
+                         ?? d?.outputAmount ?? d?.amountOut ?? null;
+          const rawIn  = d?.data?.inputAmount  ?? d?.data?.amountIn  ?? d?.data?.inAmount
+                         ?? d?.inputAmount  ?? d?.amountIn  ?? null;
+          const outMint = m ?? ns.lastOutputMint ?? null;
+          if (rawOut != null && outMint) {
+            ns.lastOrderDetails = {
+              outAmount:   String(rawOut),
+              inAmount:    rawIn != null ? String(rawIn) : null,
+              outputMint:  outMint,
+              inputMint:   d?.data?.inputMint ?? d?.inputMint ?? ns.lastInputMint ?? null,
+              inUsdValue:  null,
+              outUsdValue: null,
+              swapType:    d?.data?.swapType ?? null,
+            };
+          }
         }).catch(() => {})).catch(() => {});
       }
       // Pump.fun — mint is typically a path segment in trade/buy URLs
@@ -198,12 +216,17 @@
                 window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature: sig }, '*');
                 // Capture state NOW (before async polling starts)
                 const od = ns.lastOrderDetails;
+                // Guard: only use stored quote amounts when the mint matches the current swap
+                // (prevents stale Jupiter data from bleeding into a Raydium/pump.fun tx)
+                const _rdmMint  = od?.outputMint ?? ns.lastOutputMint ?? null;
+                const _mintOk   = od?.outputMint != null && od.outputMint === (ns.lastOutputMint ?? od.outputMint);
+                const _quotedOut = _mintOk && od?.outAmount != null ? Number(od.outAmount) : null;
                 _fetchAccuracy(
                   sig,
-                  od?.outputMint ?? ns.lastOutputMint ?? null,
+                  _rdmMint,
                   typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
-                  od?.outAmount != null ? Number(od.outAmount) : null,
-                  od?.outputMint ? (_TOKEN_DEC[od.outputMint] ?? 6) : 6
+                  _quotedOut,
+                  _rdmMint ? (_TOKEN_DEC[_rdmMint] ?? 6) : 6
                 );
               }
             }).catch(() => {})).catch(() => {});

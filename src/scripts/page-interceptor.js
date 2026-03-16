@@ -23,21 +23,40 @@
     'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 9, // mSOL
     'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 9, // jitoSOL
     'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1':  9, // bSOL
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj':  9, // stSOL
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 6, // USDC
     'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 6, // USDT
+    '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 6, // RAY
+    'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL':  9, // JTO
+    'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3': 6, // PYTH
+    'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE':  6, // ORCA
+    'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux':  8, // HNT
+    'mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6':  6, // MOBILE
+    'SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y':  9, // SHDW
+    'nosXBVoaCTtYdLvKY6Csb4AC8JCdQKKAaWYtx2ZMoo7': 6, // NOS
+    'TNSRxcUxoT9xBG3de7A4QJ1Yv4GNe3SDPM3Hg8dBud':  9, // TNSR
   };
   const _TOKEN_SYM = {
     'So11111111111111111111111111111111111111112': 'SOL',
     'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 'mSOL',
     'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 'jitoSOL',
     'bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1': 'bSOL',
+    '7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj': 'stSOL',
     'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
     'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
     'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
-    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': '$WIF',
+    'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': 'WIF',
     'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
     '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs': 'ETH',
     '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh': 'WBTC',
+    '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 'RAY',
+    'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL':  'JTO',
+    'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3': 'PYTH',
+    'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE':  'ORCA',
+    'hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux':  'HNT',
+    'mb1eu7TzEc71KxDpsmsKoucSSuuoGLv1drys1oP2jh6':  'MOBILE',
+    'SHDWyBxihqiCj6YekG2GUr7wqKLeLAMK1gHZck9pL6y':  'SHDW',
+    'TNSRxcUxoT9xBG3de7A4QJ1Yv4GNe3SDPM3Hg8dBud':  'TNSR',
   };
 
   // ── Pump.fun: extract mint from page URL immediately ──────────────────────
@@ -172,15 +191,16 @@
           if (sig && typeof sig === 'string' && sig.length >= 40
               && data?.status !== 'Failed' && !data?.error) {
             window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature: sig }, '*');
-            // Capture state NOW (before async polling starts)
+            // Delegate accuracy polling to background service worker (survives page navigation)
             const od = ns.lastOrderDetails;
-            _fetchAccuracy(
-              sig,
-              od?.outputMint ?? ns.lastOutputMint ?? null,
-              typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
-              od?.outAmount != null ? Number(od.outAmount) : null,
-              od?.outputMint ? (_TOKEN_DEC[od.outputMint] ?? 6) : 6
-            );
+            const _outMint = od?.outputMint ?? ns.lastOutputMint ?? null;
+            window.postMessage({ type: 'ZQLITE_FETCH_ACCURACY',
+              signature: sig,
+              outputMint:    _outMint,
+              walletPubkey:  typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
+              quotedRawOut:  od?.outAmount != null ? Number(od.outAmount) : null,
+              outputDecimals: _outMint ? (_TOKEN_DEC[_outMint] ?? 6) : 6,
+            }, '*');
           }
         }).catch(() => {})).catch(() => {});
       }
@@ -193,20 +213,18 @@
               const sig = data?.result ?? null;
               if (sig && typeof sig === 'string' && sig.length >= 40) {
                 window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature: sig }, '*');
-                // Capture state NOW (before async polling starts)
+                // Delegate accuracy polling to background service worker (survives page navigation)
                 const od = ns.lastOrderDetails;
-                // Guard: only use stored quote amounts when the mint matches the current swap
-                // (prevents stale Jupiter data from bleeding into a Raydium/pump.fun tx)
                 const _rdmMint  = od?.outputMint ?? ns.lastOutputMint ?? null;
                 const _mintOk   = od?.outputMint != null && od.outputMint === (ns.lastOutputMint ?? od.outputMint);
                 const _quotedOut = _mintOk && od?.outAmount != null ? Number(od.outAmount) : null;
-                _fetchAccuracy(
-                  sig,
-                  _rdmMint,
-                  typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
-                  _quotedOut,
-                  _rdmMint ? (_TOKEN_DEC[_rdmMint] ?? 6) : 6
-                );
+                window.postMessage({ type: 'ZQLITE_FETCH_ACCURACY',
+                  signature: sig,
+                  outputMint:    _rdmMint,
+                  walletPubkey:  typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
+                  quotedRawOut:  _quotedOut,
+                  outputDecimals: _rdmMint ? (_TOKEN_DEC[_rdmMint] ?? 6) : 6,
+                }, '*');
               }
             }).catch(() => {})).catch(() => {});
           }
@@ -271,11 +289,10 @@
   })();
 
   // ══════════════════════════════════════════════════════════════════════════
-  // 1b. POST-CONFIRM ACCURACY FETCH
-  // walletPubkey is resolved lazily inside the loop — the wallet hook fires at ~400ms/2s
-  // after page load so the hint captured at call time may be null. Don't bail early.
+  // 1b. POST-CONFIRM ACCURACY FETCH — now runs in background.js
+  // Kept as dead-code tombstone so merge conflicts are obvious.
   // ══════════════════════════════════════════════════════════════════════════
-  function _fetchAccuracy(signature, outputMint, walletPubkeyHint, quotedRawOut, outputDecimals) {
+  function _fetchAccuracy_UNUSED(signature, outputMint, walletPubkeyHint, quotedRawOut, outputDecimals) {
     if (!signature || !outputMint) return;
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     const isSOL = outputMint === SOL_MINT;
@@ -293,7 +310,7 @@
 
           const res = await ns.rpcCall('getTransaction', [
             signature,
-            { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+            { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
           ]);
           const tx = res?.result;
           if (!tx?.meta) continue; // not confirmed yet — retry
@@ -360,12 +377,14 @@
 
           // Quote accuracy: actual received vs quoted amount
           let quoteAccuracy = null;
+          let _quotedOutUI = null;
           if (quotedRawOut != null && quotedRawOut > 0 && outputDecimals != null) {
-            const quotedOut = Number(quotedRawOut) / Math.pow(10, outputDecimals);
-            if (quotedOut > 0) quoteAccuracy = Math.min(100, (actualOut / quotedOut) * 100);
+            _quotedOutUI = Number(quotedRawOut) / Math.pow(10, outputDecimals);
+            if (_quotedOutUI > 0) quoteAccuracy = Math.min(100, (actualOut / _quotedOutUI) * 100);
           }
 
-          window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature, quoteAccuracy: quoteAccuracy ?? -1 }, '*');
+          window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature, quoteAccuracy: quoteAccuracy ?? -1,
+            actualOut: actualOut ?? null, quotedOut: _quotedOutUI }, '*');
           return;
         } catch (_) { /* retry */ }
       }

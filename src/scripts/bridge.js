@@ -71,8 +71,33 @@ window.addEventListener('message', (e) => {
         hist[idx].quoteAccuracy = d.quoteAccuracy;
         changed = true;
       }
+      if (d.actualOut != null && hist[idx].actualOut == null) {
+        hist[idx].actualOut = d.actualOut; changed = true;
+      }
+      if (d.quotedOut != null && hist[idx].quotedOut == null) {
+        hist[idx].quotedOut = d.quotedOut; changed = true;
+      }
       if (changed) chrome.storage.local.set({ zqlite_swap_history: hist });
+      // If tokenIn symbol is still unknown, kick off an async DexScreener symbol lookup
+      if (!hist[idx].tokenIn && hist[idx].inputMint) {
+        chrome.runtime.sendMessage(
+          { type: 'FETCH_SYMBOL', mint: hist[idx].inputMint, signature: sig },
+          () => { void chrome.runtime.lastError; }
+        );
+      }
     });
+    return;
+  }
+
+  // ── Accuracy polling request — forwarded to background so it survives page unload ──
+  if (d.type === 'ZQLITE_FETCH_ACCURACY') {
+    const { signature, outputMint, walletPubkey, quotedRawOut, outputDecimals } = d;
+    if (!signature || !outputMint) return;
+    chrome.runtime.sendMessage(
+      { type: 'FETCH_ACCURACY', signature, outputMint, walletPubkey: walletPubkey ?? null,
+        quotedRawOut: quotedRawOut ?? null, outputDecimals: outputDecimals ?? null },
+      () => { void chrome.runtime.lastError; }
+    );
     return;
   }
 

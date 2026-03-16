@@ -96,22 +96,43 @@ function _histEntry(h) {
     ? `<span style="font-size:12px;font-weight:700;color:#E8E8F0;font-family:'Space Mono',monospace;white-space:nowrap">- ${_fmtAmt(h.amountIn, inSym ?? '?')}</span>`
     : `<span style="font-size:11px;font-weight:700;color:#E8E8F0">${outSym ? escHtml(outSym) : '—'}</span>`;
 
-  // Quote Accuracy row (appears ~6–15s after swap confirms, via on-chain poll)
+  // Quote Accuracy + Net vs Quote rows
   // quoteAccuracy: number 0–100 = real result, -1 = unavailable/exhausted, null = still polling
   const qAcc    = h.quoteAccuracy;
   const isFresh = (Date.now() - (h.ts ?? 0)) < 90_000; // only show pending… for ≤90s old entries
   const _qAccNum = qAcc != null ? Number(qAcc) : null;
   const accColor = _qAccNum != null && _qAccNum >= 99 ? '#14F195' : '#FFB547';
+
+  // Net vs quote row — always shown when accuracy is available and we can compute the diff
+  let netRow = '';
+  if (_qAccNum != null && _qAccNum > 0) {
+    const _qtdRaw = h.quotedOut ?? h.amountOut;
+    const _qtd = _qtdRaw != null ? parseFloat(_qtdRaw) : null;
+    if (_qtd != null && isFinite(_qtd) && _qtd > 0) {
+      const _diff = h.actualOut != null
+        ? parseFloat(h.actualOut) - _qtd          // precise: stored value
+        : _qtd * (_qAccNum / 100 - 1);            // derived: accuracy × quoted
+      if (isFinite(_diff)) {
+        const _dc  = _diff > 0 ? '#14F195' : _diff < 0 ? '#FFB547' : '#9B9BAD';
+        const _ds  = _diff > 0 ? '+' : _diff < 0 ? '\u2212' : '';
+        netRow = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:9.5px;color:#9B9BAD" title="Difference between actual tokens received on-chain and the quoted amount.">Net vs quote</span>
+          <span style="font-size:9.5px;font-weight:700;color:${_dc};white-space:nowrap">${_ds}${_fmtAmt(Math.abs(_diff), outSym ?? '')}</span>
+        </div>`;
+      }
+    }
+  }
+
   // Three states: real result (>0) | still polling (null, fresh, has sig) | unavailable/old → hide
   const accRow = (_qAccNum != null && _qAccNum > 0)
     ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:9.5px;color:#9B9BAD" title="Actual tokens received on-chain vs the quoted amount at swap time.">Quote Accuracy ✓</span>
+        <span style="font-size:9.5px;color:#9B9BAD" title="Actual tokens received on-chain vs the quoted amount at swap time.">Quote Accuracy \u2713</span>
         <span style="font-size:9.5px;font-weight:700;color:${accColor}">${_qAccNum.toFixed(2)}%</span>
        </div>`
     : (qAcc == null && h.signature && isFresh
         ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
             <span style="font-size:9.5px;color:#9B9BAD">Quote Accuracy</span>
-            <span style="font-size:9.5px;color:var(--muted)">pending…</span>
+            <span style="font-size:9.5px;color:var(--muted)">pending\u2026</span>
            </div>`
         : '');
 
@@ -131,6 +152,7 @@ function _histEntry(h) {
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
         <span style="font-size:11px;font-weight:700;color:#E8E8F0">Scanned
           <span style="font-size:9px;font-weight:700;background:${color}1A;border:1px solid ${color}40;color:${color};border-radius:10px;padding:1px 6px;vertical-align:middle;margin-left:3px">${escHtml(lvlLabel)}</span>
+          <span style="font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;background:${decBg};color:${decColor};vertical-align:middle;margin-left:3px">${decLabel}</span>
         </span>
         ${row1Right}
       </div>
@@ -138,10 +160,7 @@ function _histEntry(h) {
         <span style="font-size:11px;color:#9B9BAD">${routeLabel}</span>
         ${row2Right}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${(accRow || h.signature) ? '5px' : '0'}">
-        <span style="font-size:9px;font-weight:700;padding:2px 8px;border-radius:8px;background:${decBg};color:${decColor}">${decLabel}</span>
-        ${h.signature || accRow ? '' : `<span style="font-size:9.5px;color:var(--muted)">${ago}</span>`}
-      </div>
+      ${netRow}
       ${accRow}
       ${solscanRow}
     </div>

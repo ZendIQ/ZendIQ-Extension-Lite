@@ -17,22 +17,22 @@
     "https://api.mainnet-beta.solana.com/*",
     "https://solana.publicnode.com/*",
     "https://zendiq-backend.onrender.com/*",
-    "*://jup.ag/*",
-    "*://*.jup.ag/*",
-    "*://raydium.io/*",
-    "*://*.raydium.io/*",
-    "*://pump.fun/*",
-    "*://*.pump.fun/*"
+    "https://jup.ag/*",
+    "https://*.jup.ag/*",
+    "https://raydium.io/*",
+    "https://*.raydium.io/*",
+    "https://pump.fun/*",
+    "https://*.pump.fun/*"
   ],
   "content_scripts": [
     {
       "matches": [
-        "*://jup.ag/*",
-        "*://*.jup.ag/*",
-        "*://raydium.io/*",
-        "*://*.raydium.io/*",
-        "*://pump.fun/*",
-        "*://*.pump.fun/*"
+        "https://jup.ag/*",
+        "https://*.jup.ag/*",
+        "https://raydium.io/*",
+        "https://*.raydium.io/*",
+        "https://pump.fun/*",
+        "https://*.pump.fun/*"
       ],
       "js": [
         "src/scripts/page-config.js",
@@ -47,12 +47,12 @@
     },
     {
       "matches": [
-        "*://jup.ag/*",
-        "*://*.jup.ag/*",
-        "*://raydium.io/*",
-        "*://*.raydium.io/*",
-        "*://pump.fun/*",
-        "*://*.pump.fun/*"
+        "https://jup.ag/*",
+        "https://*.jup.ag/*",
+        "https://raydium.io/*",
+        "https://*.raydium.io/*",
+        "https://pump.fun/*",
+        "https://*.pump.fun/*"
       ],
       "js": ["src/scripts/bridge.js"],
       "run_at": "document_start",
@@ -79,12 +79,12 @@
     {
       "resources": ["assets/icon-48.png"],
       "matches": [
-        "*://jup.ag/*",
-        "*://*.jup.ag/*",
-        "*://raydium.io/*",
-        "*://*.raydium.io/*",
-        "*://pump.fun/*",
-        "*://*.pump.fun/*"
+        "https://jup.ag/*",
+        "https://*.jup.ag/*",
+        "https://raydium.io/*",
+        "https://*.raydium.io/*",
+        "https://pump.fun/*",
+        "https://*.pump.fun/*"
       ]
     }
   ]

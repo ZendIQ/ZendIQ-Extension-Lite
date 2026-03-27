@@ -66,7 +66,7 @@
     // ── Settings (loaded from storage via bridge) ─────────────────────────
     settings: {
       enabled:      true,
-      minRiskLevel: 'MEDIUM',   // ALL | MEDIUM | HIGH | CRITICAL
+      minRiskLevel: 'ALL',       // ALL | MEDIUM | HIGH | CRITICAL
       sites: { jupiter: true, raydium: true, pumpfun: true },
     },
 

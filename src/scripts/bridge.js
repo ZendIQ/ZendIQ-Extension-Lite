@@ -14,7 +14,7 @@ window.addEventListener('message', (e) => {
         type: 'ZQLITE_SETTINGS_RESPONSE',
         settings: {
           enabled:      s.enabled      !== false,
-          minRiskLevel: s.minRiskLevel ?? 'MEDIUM',
+          minRiskLevel: s.minRiskLevel ?? 'ALL',
           sites: s.sites ?? { jupiter: true, raydium: true, pumpfun: true },
         },
       }, '*');

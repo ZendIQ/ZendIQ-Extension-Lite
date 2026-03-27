@@ -75,8 +75,8 @@ function renderSecurityPanel() {
   if (_secChecking && !_secResult) {
     panel.innerHTML = `
       <div class="section" style="text-align:center;padding:28px 16px">
-        <div style="font-size:12px;color:var(--muted);animation:secPulse 1.2s ease-in-out infinite;margin-bottom:6px">Scanning on-chain approvals…</div>
-        <div style="font-size:10px;color:var(--muted)">Checking SPL Token &amp; Token-2022 programs</div>
+        <div style="font-size:var(--fs-sm);color:var(--muted);animation:secPulse 1.2s ease-in-out infinite;margin-bottom:6px">Scanning on-chain approvals…</div>
+        <div style="font-size:var(--fs-sm);color:var(--muted)">Checking SPL Token &amp; Token-2022 programs</div>
       </div>`;
     return;
   }
@@ -87,7 +87,7 @@ function renderSecurityPanel() {
       <div class="section">
         <div class="section-title">Wallet Security Check</div>
         ${walletPubkey ? `
-        <p style="font-size:11px;color:var(--muted);line-height:1.65;margin-bottom:14px">
+        <p style="font-size:var(--fs-base);color:var(--muted);line-height:1.65;margin-bottom:14px">
           ZendIQ scans your wallet for <strong style="color:var(--text)">unlimited token approvals</strong>,
           known drain contracts, and wallet-specific risks.<br><br>
           All checks are read-only queries against your <strong style="color:var(--text)">public wallet address</strong>.
@@ -95,12 +95,12 @@ function renderSecurityPanel() {
         </p>
         <button id="sec-run-btn" class="btn-q">🔒 Run Security Check</button>` : ''}
         ${!walletPubkey ? `
-        <div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:10.5px;color:var(--muted);line-height:1.7">
+        <div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);font-size:var(--fs-base);color:var(--muted);line-height:1.7">
           <div style="font-weight:700;color:var(--text);margin-bottom:5px">How to enable the wallet scan:</div>
           <div style="margin-bottom:4px">1. Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--purple);font-weight:700;text-decoration:none">jup.ag</a>, <a href="https://raydium.io" target="_blank" rel="noopener" style="color:var(--purple);font-weight:700;text-decoration:none">raydium.io</a>, or pump.fun and connect your wallet.</div>
           <div style="margin-bottom:4px">2. ZendIQ reads your <strong style="color:var(--text)">public address</strong> from the page — no wallet added to ZendIQ.</div>
           <div>3. Return here and click <strong style="color:var(--text)">Run Security Check</strong>.</div>
-          <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;color:var(--text)">
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);font-size:var(--fs-base);color:var(--text)">
             <span style="color:var(--green)">✓</span> <strong>Your private key and seed phrase are never read or stored by ZendIQ.</strong>
           </div>
         </div>` : ''}
@@ -167,7 +167,7 @@ function renderSecurityPanel() {
 
     const reviewToggle = f.reviewable
       ? `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px;padding:6px 10px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06)">
-          <span style="font-size:10px;font-weight:600;color:${_reviewedAutoApprove ? 'var(--green)' : 'var(--orange)'}">I've disabled unsafe wallet settings</span>
+          <span style="font-size:var(--fs-base);font-weight:600;color:${_reviewedAutoApprove ? 'var(--green)' : 'var(--orange)'}">I've disabled unsafe wallet settings</span>
           <label class="switch" title="${_reviewedAutoApprove ? 'Click to un-mark' : 'Check this once you have disabled auto-approve and removed unrecognised connected apps'}" style="flex-shrink:0">
             <input type="checkbox" id="sec-reviewed-toggle" ${_reviewedAutoApprove ? 'checked' : ''}>
             <span class="slider slider-amber"></span>
@@ -187,8 +187,8 @@ function renderSecurityPanel() {
 
     const stepsHtml = f.steps
       ? `<div style="margin-top:6px;padding:7px 10px;border-radius:6px;background:rgba(153,69,255,0.07);border:1px solid rgba(153,69,255,0.18)">
-          <div style="font-size:9px;text-transform:uppercase;letter-spacing:0.7px;color:var(--purple);font-weight:700;margin-bottom:4px">Steps inside your wallet</div>
-          <div style="font-size:10.5px;color:var(--text);line-height:1.55">${esc(f.steps)}</div>
+          <div style="font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:0.7px;color:var(--purple);font-weight:700;margin-bottom:4px">Steps inside your wallet</div>
+          <div style="font-size:var(--fs-base);color:var(--text);line-height:1.55">${esc(f.steps)}</div>
         </div>`
       : '';
 
@@ -199,8 +199,8 @@ function renderSecurityPanel() {
     <div class="sec-finding"${tipAttr}${tipCursor}>
       <span class="sec-finding-icon" style="color:${sevColor[f.severity] ?? 'var(--muted)'}">${sevIcon[f.severity] ?? '·'}</span>
       <div style="flex:1">
-        <div style="font-size:11px;font-weight:600;color:${textColor}">${esc(f.text)}</div>
-        ${f.detail ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${esc(f.detail)}</div>` : ''}
+        <div style="font-size:var(--fs-base);font-weight:600;color:${textColor}">${esc(f.text)}</div>
+        ${f.detail ? `<div style="font-size:var(--fs-base);color:var(--muted);margin-top:2px">${esc(f.detail)}</div>` : ''}
         ${stepsHtml}
         ${reviewToggle}
       </div>
@@ -213,7 +213,7 @@ function renderSecurityPanel() {
   panel.innerHTML = `
     ${walletBar}
     ${_secWalletMissing ? `
-    <div style="margin:0 0 10px;padding:8px 12px;border-radius:7px;background:rgba(255,181,71,0.08);border:1px solid rgba(255,181,71,0.25);font-size:10.5px;color:var(--orange);line-height:1.6">
+    <div style="margin:0 0 10px;padding:8px 12px;border-radius:7px;background:rgba(255,181,71,0.08);border:1px solid rgba(255,181,71,0.25);font-size:var(--fs-base);color:var(--orange);line-height:1.6">
       ⚠ Open <a href="https://jup.ag" target="_blank" rel="noopener" style="color:var(--orange);font-weight:700;text-decoration:underline">jup.ag</a>, <a href="https://raydium.io" target="_blank" rel="noopener" style="color:var(--orange);font-weight:700;text-decoration:underline">raydium.io</a>, or pump.fun and connect your wallet, then click Re-check.
     </div>` : ''}
     <div class="section">
@@ -223,12 +223,12 @@ function renderSecurityPanel() {
           <div style="cursor:help" data-tip="Score starts at 100. Deductions: −30 per known drainer (max −60), −20 per unlimited approval (max −40), −20 if wallet settings unreviewed. 100 = Secure · 80–99 = Review · 60–79 = At Risk · below 60 = Critical.">
             <div style="display:flex;align-items:baseline;gap:5px">
               <span style="font-size:32px;font-weight:900;color:${scoreColor};font-family:'Space Mono',monospace;line-height:1">${displayScore ?? '—'}</span>
-              <span style="font-size:13px;font-weight:700;color:${scoreColor}">${scoreLabel}</span>
+              <span style="font-size:var(--fs-base);font-weight:700;color:${scoreColor}">${scoreLabel}</span>
             </div>
-            ${timeAgo ? `<div style="font-size:9px;color:var(--muted);margin-top:2px">Scanned ${esc(timeAgo)}</div>` : ''}
+            ${timeAgo ? `<div style="font-size:var(--fs-sm);color:var(--muted);margin-top:2px">Scanned ${esc(timeAgo)}</div>` : ''}
           </div>
         </div>
-        <button id="sec-run-btn" class="btn-q" title="Re-scan all token accounts on-chain for active unlimited approvals and known drainer contracts" style="width:auto;padding:7px 12px;margin:0;font-size:10px;flex-shrink:0" ${_secChecking ? 'disabled' : ''}>
+        <button id="sec-run-btn" class="btn-q" title="Re-scan all token accounts on-chain for active unlimited approvals and known drainer contracts" style="width:auto;padding:7px 12px;margin:0;font-size:var(--fs-sm);flex-shrink:0" ${_secChecking ? 'disabled' : ''}>
           ${_secChecking ? 'Scanning…' : '↺ Re-check'}
         </button>
       </div>
@@ -239,12 +239,12 @@ function renderSecurityPanel() {
       <div class="section-title" title="Each finding describes a specific risk detected in your wallet. Hover over individual findings for a full explanation." style="cursor:help">Other Findings</div>
       ${otherFindingsHtml}
       ${revokeLink}
-      <div style="margin-top:10px;font-size:10px;color:var(--muted);line-height:1.7">
+      <div style="margin-top:10px;font-size:var(--fs-base);color:var(--muted);line-height:1.7">
         <span style="color:var(--green)">✓</span> ZendIQ never reads or stores your private key or seed phrase. &nbsp;
         <a href="https://revoke.cash" target="_blank" rel="noopener" style="color:var(--purple);text-decoration:none">revoke.cash</a> is a trusted third-party tool.
       </div>
     </div>
-    <div id="sec-float-tip" style="display:none;position:fixed;z-index:9999;max-width:240px;padding:9px 12px;border-radius:8px;background:#13131F;border:1px solid rgba(255,255,255,0.13);font-size:10.5px;color:#C8C8D8;line-height:1.65;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,0.6)"></div>`;
+    <div id="sec-float-tip" style="display:none;position:fixed;z-index:9999;max-width:240px;padding:9px 12px;border-radius:8px;background:#13131F;border:1px solid rgba(255,255,255,0.13);font-size:var(--fs-base);color:#C8C8D8;line-height:1.65;pointer-events:none;box-shadow:0 6px 20px rgba(0,0,0,0.6)"></div>`;
 
   // ── Wire up all interactive elements after innerHTML ───────────────────────
   document.getElementById('sec-run-btn')?.addEventListener('click', () => {

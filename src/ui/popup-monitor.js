@@ -28,13 +28,13 @@ function loadMonitor() {
             <span class="site-chip ${sites.pumpfun ? '' : 'off'}">Pump.fun</span>
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted);text-align:right">
+        <div style="font-size:var(--fs-sm);color:var(--muted);text-align:right">
           <div style="font-size:18px;font-weight:900;font-family:'Space Mono',monospace;color:var(--text)">${todayCount}</div>
           <div>today</div>
         </div>
       </div>
 
-      <div style="font-size:9px;color:var(--muted);margin-top:6px;line-height:1.5">
+      <div style="font-size:var(--fs-base);color:var(--muted);margin-top:6px;line-height:1.5">
         ZendIQ Lite hooks into Jupiter, Raydium, and Pump.fun —
         when you click Swap, it scans the output token and warns you if risk is above your threshold.
       </div>

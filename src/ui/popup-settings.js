@@ -9,7 +9,7 @@ function loadSettings() {
 
   chrome.storage.local.get(['zqlite_settings'], ({ zqlite_settings: s = {} }) => {
     const enabled  = s.enabled      !== false;
-    const level    = s.minRiskLevel ?? 'MEDIUM';
+    const level    = s.minRiskLevel ?? 'ALL';
     const sites    = s.sites        ?? { jupiter: true, raydium: true, pumpfun: true };
 
     panel.innerHTML = `
@@ -30,15 +30,19 @@ function loadSettings() {
       <!-- Risk threshold -->
       <div class="setting-group">
         <div class="setting-group-label">Minimum Risk Level to Warn</div>
-        <div class="setting-row">
+        <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px">
           <div>
             <div class="setting-label">Show overlay when risk is at least</div>
             <div class="setting-sub">Tokens below this threshold pass through silently</div>
           </div>
           <div class="rsel" id="s-level-wrap">
             <input type="hidden" id="s-level" value="${level}">
-            <div class="rsel-trigger" id="s-level-trigger">
-              <span class="rsel-trigger-label" id="s-level-label"></span>
+            <div class="rsel-trigger" id="s-level-trigger" style="width:100%">
+              <span class="rsel-dot" id="s-level-dot" data-level="${level}"></span>
+              <div style="flex:1;min-width:0">
+                <div class="rsel-trigger-label" id="s-level-label"></div>
+                <div class="rsel-opt-sub" id="s-level-sub"></div>
+              </div>
               <svg class="rsel-arrow" width="10" height="6" viewBox="0 0 10 6" fill="none">
                 <path d="M1 1l4 4 4-4" stroke="#6B6B8A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
@@ -64,7 +68,7 @@ function loadSettings() {
           </div>
         </div>
         <div class="setting-row" style="padding-top:0;padding-bottom:12px">
-          <div style="font-size:9.5px;color:var(--muted);line-height:1.6">
+          <div style="font-size:var(--fs-sm);color:var(--muted);line-height:1.6">
             Score guide: LOW &lt;25 · MEDIUM 25–49 · HIGH 50–74 · CRITICAL ≥75
           </div>
         </div>
@@ -96,7 +100,7 @@ function loadSettings() {
         </div>
       </div>
 
-      <div style="font-size:9px;color:var(--muted);line-height:1.6;margin-top:2px">
+      <div style="font-size:var(--fs-base);color:var(--muted);line-height:1.6;margin-top:2px">
         Changes take effect immediately on open tabs.
       </div>
     `;
@@ -108,22 +112,28 @@ function loadSettings() {
 
     // Custom risk-level dropdown
     const _LEVEL_LABELS = { ALL: 'All tokens', MEDIUM: 'Medium+', HIGH: 'High+', CRITICAL: 'Critical only' };
+    const _LEVEL_SUBS   = { ALL: 'Warn on every swap', MEDIUM: 'Risk score ≥ 25 / 100', HIGH: 'Risk score ≥ 50 / 100', CRITICAL: 'Risk score ≥ 75 / 100' };
     const rselTrigger   = document.getElementById('s-level-trigger');
     const rselMenu      = document.getElementById('s-level-menu');
     const rselInput     = document.getElementById('s-level');
     const rselLabel     = document.getElementById('s-level-label');
+    const rselSub       = document.getElementById('s-level-sub');
+    const rselDot       = document.getElementById('s-level-dot');
 
-    // Seed label from initial level
+    // Seed trigger from initial level
     if (rselLabel) rselLabel.textContent = _LEVEL_LABELS[level] ?? level;
+    if (rselSub)   rselSub.textContent   = _LEVEL_SUBS[level]   ?? '';
+    if (rselDot)   rselDot.dataset.level = level;
 
-    // Toggle open/close — position using fixed coords to escape overflow:hidden
+    // Toggle open/close — match menu width to trigger; keep within popup
     rselTrigger?.addEventListener('click', e => {
       e.stopPropagation();
       const isOpen = rselMenu.style.display !== 'none';
       if (!isOpen) {
         const r = rselTrigger.getBoundingClientRect();
-        rselMenu.style.top  = (r.bottom + 5) + 'px';
-        rselMenu.style.left = r.left + 'px';
+        rselMenu.style.top   = (r.bottom + 5) + 'px';
+        rselMenu.style.left  = r.left + 'px';
+        rselMenu.style.width = r.width + 'px';
       }
       rselMenu.style.display = isOpen ? 'none' : 'block';
       rselTrigger.classList.toggle('open', !isOpen);
@@ -144,6 +154,8 @@ function loadSettings() {
         const val = opt.dataset.value;
         rselInput.value       = val;
         rselLabel.textContent = _LEVEL_LABELS[val] ?? val;
+        rselSub.textContent   = _LEVEL_SUBS[val]   ?? '';
+        rselDot.dataset.level = val;
         rselMenu.querySelectorAll('.rsel-opt').forEach(o => o.classList.remove('selected'));
         opt.classList.add('selected');
         rselMenu.style.display = 'none';

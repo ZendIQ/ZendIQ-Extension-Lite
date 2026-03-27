@@ -60,6 +60,8 @@ document.addEventListener('DOMContentLoaded', () => {
     _activeTab = name;
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     tabPanels.forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    // Re-apply security tab badge so borderBottomColor is cleared when switching away
+    if (typeof _updateSecurityTabColor === 'function') _updateSecurityTabColor();
     // Lazy-load each tab on first open
     if (name === 'monitor')  loadMonitor();
     if (name === 'security') loadSecurity();

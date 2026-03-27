@@ -106,16 +106,23 @@
 
   const _origFetch = window.fetch.bind(window);
   window.fetch = function (resource, opts) {
-    const url = resource instanceof Request ? resource.url : String(resource ?? '');
+    const _isReq = resource instanceof Request;
+    const url    = _isReq ? resource.url : String(resource ?? '');
+    // Jupiter calls fetch(new Request(url, {method:'POST',...})) without a second argument,
+    // so opts is undefined and (opts?.method ?? 'GET') wrongly defaults to 'GET',
+    // which caused the /execute POST intercept block to be silently skipped.
+    const _httpMethod = (_isReq ? resource.method : (opts?.method ?? 'GET')).toUpperCase();
+    // Body: only synchronously readable via opts (Request.body is a ReadableStream).
+    const _httpBody = _isReq ? null : (opts?.body ?? null);
     const resp = _origFetch(resource, opts);
     try {
       // Sniff jup.ag’s own Solana RPC endpoint — it supports CORS from this domain
       // so we can reuse it for getTransaction without going through the bridge.
       if (!ns._jupRpcUrl && url && typeof url === 'string'
-          && (opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body
+          && _httpMethod === 'POST' && _httpBody
           && !url.includes('jup.ag') && !url.includes('pump.fun') && !url.includes('raydium.io')) {
         try {
-          const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+          const b = typeof _httpBody === 'string' ? JSON.parse(_httpBody) : null;
           if (b?.jsonrpc === '2.0' && b?.method) ns._jupRpcUrl = url;
         } catch (_) {}
       }
@@ -152,9 +159,9 @@
         const out = u.searchParams.get('outputMint') ?? u.searchParams.get('quoteMint') ?? u.searchParams.get('mintB');
         if (out) { ns.lastOutputMint = out; _probeScore(out); }
         // For POST requests, also parse request body for mints
-        if (!out && (opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body) {
+        if (!out && _httpMethod === 'POST' && _httpBody) {
           try {
-            const _rb = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+            const _rb = typeof _httpBody === 'string' ? JSON.parse(_httpBody) : null;
             const _bodyMint = _rb?.outputMint ?? _rb?.quoteMint ?? _rb?.mintB ?? null;
             if (_bodyMint) { ns.lastOutputMint = _bodyMint; _probeScore(_bodyMint); }
           } catch (_) {}
@@ -170,9 +177,9 @@
         // Capture the SOL amount from the POST body so we can report trade_sol in event payloads.
         // pump.fun sends { amount: 0.5, denominatedInSol: "true" } or { amount: 500, denominatedInSol: "false" }
         // (false case = token quantity — we can't trivially convert that to SOL, so we skip it)
-        if ((opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body) {
+        if (_httpMethod === 'POST' && _httpBody) {
           try {
-            const _b = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+            const _b = typeof _httpBody === 'string' ? JSON.parse(_httpBody) : null;
             if (_b && typeof _b.amount === 'number' && _b.amount > 0) {
               const _inSol = _b.denominatedInSol == null
                 || _b.denominatedInSol === true
@@ -185,7 +192,7 @@
 
       // ── Capture transaction signature from execute / RPC response ──────────
       // Jupiter Ultra /execute — response: { signature: '<base58>', status: 'Success' }
-      if (/\/execute($|\?)/.test(url) && (opts?.method ?? 'GET').toUpperCase() === 'POST') {
+      if (/\/execute($|\?)/.test(url) && _httpMethod === 'POST') {
         resp.then(r => r.clone().json().then(data => {
           const sig = data?.signature ?? null;
           if (sig && typeof sig === 'string' && sig.length >= 40
@@ -205,9 +212,9 @@
         }).catch(() => {})).catch(() => {});
       }
       // Solana RPC sendTransaction (Raydium, Pump.fun, etc.) — response: { result: '<base58>' }
-      if ((opts?.method ?? 'GET').toUpperCase() === 'POST' && opts?.body) {
+      if (_httpMethod === 'POST' && _httpBody) {
         try {
-          const b = typeof opts.body === 'string' ? JSON.parse(opts.body) : null;
+          const b = typeof _httpBody === 'string' ? JSON.parse(_httpBody) : null;
           if (b?.method === 'sendTransaction' || b?.method === 'send_raw_transaction') {
             resp.then(r => r.clone().json().then(data => {
               const sig = data?.result ?? null;
@@ -394,6 +401,79 @@
   }
 
   // ══════════════════════════════════════════════════════════════════════════
+  // 1b. SIGNATURE HELPERS — used by wallet hook to capture tx sig at signing time
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Compact base58 encoder — used to turn a 64-byte Ed25519 signature into a
+  // Solana transaction ID string.  BigInt is safe to use in all MV3 target browsers.
+  function _b58Encode(bytes) {
+    const ALPHA = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let n = BigInt(0);
+    for (const b of bytes) n = (n << 8n) | BigInt(b);
+    let s = '';
+    const B = 58n;
+    while (n > 0n) { const r = n % B; s = ALPHA[Number(r)] + s; n = (n - r) / B; }
+    for (const b of bytes) { if (b !== 0) break; s = '1' + s; }
+    return s;
+  }
+
+  // Post ZQLITE_HISTORY_PATCH + ZQLITE_FETCH_ACCURACY once we have a base58 signature.
+  // Called from the wallet hook after originalFn resolves — covers any execution path
+  // (Jupiter /execute, Raydium sendTransaction, etc.) regardless of how the DEX broadcasts.
+  function _patchHistorySig(sig) {
+    if (!sig || typeof sig !== 'string' || sig.length < 40) return;
+    window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature: sig }, '*');
+    const od = ns.lastOrderDetails;
+    const _outMint = od?.outputMint ?? ns.lastOutputMint ?? null;
+    window.postMessage({
+      type: 'ZQLITE_FETCH_ACCURACY',
+      signature:      sig,
+      outputMint:     _outMint,
+      walletPubkey:   typeof ns.resolveWalletPubkey === 'function' ? ns.resolveWalletPubkey() : null,
+      quotedRawOut:   od?.outAmount != null ? Number(od.outAmount) : null,
+      outputDecimals: _outMint ? (_TOKEN_DEC[_outMint] ?? 6) : 6,
+    }, '*');
+  }
+
+  // Extract a 64-byte signature from a wallet result, trying multiple formats:
+  //   WS signAndSendTransaction → result[0].signature (Uint8Array or base58 string)
+  //   WS signTransaction        → result[0].signedTransaction (serialized VersionedTransaction)
+  //   Legacy signTransaction     → tx.signatures[0] mutated in-place (Uint8Array(64))
+  //   Legacy signAndSendTransaction → result.signature (base58 string)
+  function _extractSigFromResult(result, tx, method) {
+    try {
+      const _r = Array.isArray(result) ? result[0] : result;
+
+      // signAndSendTransaction: signature returned directly
+      if (method === 'signAndSendTransaction') {
+        const _rs = _r?.signature ?? null;
+        if (typeof _rs === 'string' && _rs.length >= 40) return _rs;   // already base58
+        if (_rs && typeof _rs === 'object') {
+          const _bytes = _rs instanceof Uint8Array ? _rs : new Uint8Array(Object.values(_rs));
+          if (_bytes.length === 64) return _b58Encode(_bytes);
+        }
+      }
+
+      // Wallet Standard signTransaction: signedTransaction is a serialized tx byte array.
+      // Serialized VersionedTransaction layout: [compact-u16 numSigs][sig0 64B]...[message]
+      const _stx = _r?.signedTransaction ?? _r?.transaction;
+      if (_stx instanceof Uint8Array && _stx.length > 65 && _stx[0] >= 1 && _stx[0] <= 10) {
+        const _sig64 = _stx.slice(1, 65);
+        if (!_sig64.every(b => b === 0)) return _b58Encode(_sig64);
+      }
+
+      // Legacy signTransaction: tx object mutated in-place (or returned as result)
+      const _obj = (_r && _r.signatures) ? _r : tx;
+      const _s0 = _obj?.signatures?.[0];
+      if (_s0 instanceof Uint8Array && _s0.length === 64 && !_s0.every(b => b === 0))
+        return _b58Encode(_s0);
+      if (Array.isArray(_s0) && _s0.length === 64)
+        return _b58Encode(new Uint8Array(_s0));
+    } catch (_) {}
+    return null;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
   // 2. PROACTIVE SCORE FETCH
   // ══════════════════════════════════════════════════════════════════════════
   let _probedMint = null;
@@ -570,7 +650,9 @@
 
     if (decision === 'cancel') return; // do nothing — swap never continues
 
-    // User confirmed — re-fire the click bypassing our interceptor
+    // User confirmed — re-fire the click bypassing our interceptor.
+    // The wallet hook (handleTransaction) will fire next and capture the signature
+    // from the signed tx via _extractSigFromResult + _patchHistorySig.
     window.__zqlite_swap_bypass = true;
     try { btn.click(); } finally { window.__zqlite_swap_bypass = false; }
   }, { capture: true });
@@ -668,7 +750,16 @@
     window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: _evtName2, data: { mint, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, trade_usd: _tradeUsd2, trade_sol: _tradeSol2, site: host } }, '*');
 
     if (decision === 'cancel') throw new Error('ZendIQ Lite: swap cancelled by user (token risk)');
-    return originalFn(tx, opts);
+    const _walletResult = await originalFn(tx, opts);
+    // Capture signature from the signed tx and patch the history entry.
+    // This covers Jupiter whose /execute call may go through a Service Worker
+    // (bypassing our window.fetch override) — the wallet always returns the signed
+    // tx, so we extract the first Ed25519 signature bytes here instead.
+    try {
+      const _sig = _extractSigFromResult(_walletResult, tx, _method);
+      if (_sig) _patchHistorySig(_sig);
+    } catch (_) {}
+    return _walletResult;
   };
 
   // ══════════════════════════════════════════════════════════════════════════

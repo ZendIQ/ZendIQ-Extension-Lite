@@ -3,6 +3,29 @@
  * History tab: lists intercepted swaps with risk level + decision.
  */
 
+// Wire the shared floating tooltip (#float-tip) to all [data-tip] elements in a container.
+function _wireFloatTip(container) {
+  const tip = document.getElementById('float-tip');
+  if (!tip) return;
+  container.querySelectorAll('[data-tip]').forEach(el => {
+    el.addEventListener('mouseenter', () => {
+      tip.textContent = el.dataset.tip;
+      tip.style.display = 'block';
+    });
+    el.addEventListener('mousemove', e => {
+      const tipH = tip.offsetHeight;
+      const tipW = tip.offsetWidth || 280;
+      const x    = Math.min(e.clientX + 12, window.innerWidth - tipW - 8);
+      const y    = (window.innerHeight - e.clientY) < (tipH + 24)
+                   ? e.clientY - tipH - 8
+                   : e.clientY + 16;
+      tip.style.left = Math.max(4, x) + 'px';
+      tip.style.top  = Math.max(4, y) + 'px';
+    });
+    el.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
+}
+
 // Relative time — mirrors Pro's _fmtAgo
 function _fmtAgo(ts) {
   if (!ts) return '';
@@ -57,6 +80,7 @@ function loadHistory() {
       <div style="max-height:340px;overflow-y:auto;padding-right:4px">${entries}</div>
       ${hist.length > 50 ? `<div style="font-size:var(--fs-sm);color:var(--muted);text-align:center;margin-top:4px">Showing 50 of ${hist.length}</div>` : ''}
     `;
+    _wireFloatTip(panel);
   });
 }
 
@@ -95,6 +119,52 @@ function _histEntry(h) {
   const row2Right = hasAmounts && h.amountIn != null
     ? `<span style="font-size:var(--fs-sm);font-weight:700;color:#E8E8F0;font-family:'Space Mono',monospace;white-space:nowrap">- ${_fmtAmt(h.amountIn, inSym ?? '?')}</span>`
     : `<span style="font-size:var(--fs-xs);font-weight:700;color:#E8E8F0">${outSym ? escHtml(outSym) : '—'}</span>`;
+
+  // ── Cancelled-swap extra rows ─────────────────────────────────────────────
+  // "Avoided spending" — how much the user did NOT send
+  let avoidedSpendRow = '';
+  if (dec === 'cancel') {
+    // Prefer USD value, then SOL amount (pump.fun), then token amount
+    if (h.inUsdValue != null && h.inUsdValue > 0) {
+      const _usd = Number(h.inUsdValue);
+      const _fmt = _usd < 0.01 ? '< $0.01' : '$' + _usd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      avoidedSpendRow = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:var(--fs-sm);color:#9B9BAD" title="Trade size that was not sent after you cancelled.">Avoided spending</span>
+        <span style="font-size:var(--fs-sm);font-weight:700;color:#E8E8F0;white-space:nowrap">${escHtml(_fmt)}</span>
+      </div>`;
+    } else if (h.solAmountIn != null && h.solAmountIn > 0) {
+      const _solFmt = Number(h.solAmountIn).toFixed(Number(h.solAmountIn) < 0.1 ? 4 : 2);
+      avoidedSpendRow = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:var(--fs-sm);color:#9B9BAD" title="Trade size that was not sent after you cancelled.">Avoided spending</span>
+        <span style="font-size:var(--fs-sm);font-weight:700;color:#E8E8F0;white-space:nowrap">${escHtml(_solFmt)} SOL</span>
+      </div>`;
+    } else if (hasAmounts && h.amountIn != null) {
+      avoidedSpendRow = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:var(--fs-sm);color:#9B9BAD" title="Trade size that was not sent after you cancelled.">Avoided spending</span>
+        <span style="font-size:var(--fs-sm);font-weight:700;color:#E8E8F0;white-space:nowrap">${_fmtAmt(h.amountIn, inSym ?? '?')}</span>
+      </div>`;
+    }
+  }
+
+  // "Risk avoided" — statistical loss estimate for HIGH/CRITICAL cancelled swaps
+  // Uses probability of loss × trade size. Not shown for LOW/MEDIUM (noise) or when no trade size.
+  let riskAvoidedRow = '';
+  if (dec === 'cancel' && (lvl === 'HIGH' || lvl === 'CRITICAL')) {
+    // Rug/loss probability by level: HIGH ~55%, CRITICAL ~80%
+    // Average loss when it does happen: ~70% of trade value (typical pump-and-dump)
+    const _rugProb  = lvl === 'CRITICAL' ? 0.80 : 0.55;
+    const _lossFrac = 0.70;
+    let _tradeUsd   = h.inUsdValue != null ? Number(h.inUsdValue) : null;
+    if (_tradeUsd == null && h.solAmountIn != null) _tradeUsd = Number(h.solAmountIn) * 150; // ~SOL price proxy
+    if (_tradeUsd != null && _tradeUsd > 0) {
+      const _expLoss = _tradeUsd * _rugProb * _lossFrac;
+      const _fmtLoss = _expLoss < 0.01 ? '< $0.01' : '~$' + _expLoss.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      riskAvoidedRow = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:var(--fs-sm);color:#9B9BAD;cursor:help" data-tip="Statistical expected savings from cancelling. ${lvl === 'CRITICAL' ? '~80%' : '~55%'} probability of losing ~70% of trade value on ${lvl === 'CRITICAL' ? 'Critical' : 'High'} risk tokens. Not a guarantee.">Est. savings</span>
+        <span style="font-size:var(--fs-sm);font-weight:700;color:#14F195;white-space:nowrap">${escHtml(_fmtLoss)}</span>
+      </div>`;
+    }
+  }
 
   // Quote Accuracy + Net vs Quote rows
   // quoteAccuracy: number 0–100 = real result, -1 = unavailable/exhausted, null = still polling
@@ -149,6 +219,17 @@ function _histEntry(h) {
                </div>`
             : ''));
 
+  // ── Risk factor tooltip (shown on hover over risk badge) ─────────────────
+  let factorTip = '';
+  if (Array.isArray(h.factors) && h.factors.length > 0) {
+    const _SEV_ORD = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+    const _sorted  = h.factors.slice().sort((a, b) =>
+      (_SEV_ORD[a.severity] ?? 9) - (_SEV_ORD[b.severity] ?? 9)
+    );
+    factorTip = `Risk score: ${h.score ?? '?'}/100 · ${lvlLabel}\n\n` +
+      _sorted.map(f => `[${f.severity}] ${f.name}${f.detail ? ' — ' + f.detail : ''}`).join('\n');
+  }
+
   // Solscan row (only when signature captured)
   const solscanRow = h.signature
     ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,0.06)">
@@ -164,7 +245,7 @@ function _histEntry(h) {
     <div style="padding:9px 11px;border-radius:9px;border:1px solid ${border};background:${cardBg};margin-bottom:6px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
         <span style="font-size:var(--fs-base);font-weight:700;color:#E8E8F0">Scanned
-          <span style="font-size:var(--fs-xs);font-weight:700;background:${color}1A;border:1px solid ${color}40;color:${color};border-radius:10px;padding:1px 6px;vertical-align:middle;margin-left:3px">${escHtml(lvlLabel)}</span>
+          <span style="font-size:var(--fs-xs);font-weight:700;background:${color}1A;border:1px solid ${color}40;color:${color};border-radius:10px;padding:1px 6px;vertical-align:middle;margin-left:3px${factorTip ? ';cursor:help' : ''}"${factorTip ? ` data-tip="${escAttr(factorTip)}"` : ''}>${escHtml(lvlLabel)}</span>
           <span style="font-size:var(--fs-xs);font-weight:700;padding:1px 6px;border-radius:8px;background:${decBg};color:${decColor};vertical-align:middle;margin-left:3px">${decLabel}</span>
         </span>
         ${row1Right}
@@ -173,6 +254,8 @@ function _histEntry(h) {
         <span style="font-size:var(--fs-base);color:#9B9BAD">${routeLabel}</span>
         ${row2Right}
       </div>
+      ${avoidedSpendRow}
+      ${riskAvoidedRow}
       ${netRow}
       ${accRow}
       ${solscanRow}

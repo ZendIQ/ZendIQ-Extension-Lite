@@ -593,6 +593,29 @@
           }).catch(() => null),
           new Promise(r => setTimeout(() => r(null), 18000)),
         ]);
+      } else {
+        // Scoring module not initialised yet — poll until fetchTokenScore becomes available,
+        // then start the scan. This ensures scanPending=true and the progress bar/spinner
+        // are always shown instead of "No scan data available" on the first swap of a session.
+        _scorePromise = new Promise(resolve => {
+          let _attempts = 0;
+          const _poll = setInterval(() => {
+            _ensureScoring();
+            if (typeof fetchTokenScore === 'function') {
+              clearInterval(_poll);
+              fetchTokenScore(mint).then(r => {
+                if (r) {
+                  ns.lastTokenScore = r;
+                  window.postMessage({ type: 'ZQLITE_SAVE_SCAN', scan: { mint, result: r, ts: Date.now(), site: location.hostname } }, '*');
+                }
+                resolve(r ?? null);
+              }).catch(() => resolve(null));
+            } else if (++_attempts > 100) { // 10s hard timeout
+              clearInterval(_poll);
+              resolve(null);
+            }
+          }, 100);
+        });
       }
     } else if (mint) {
       // Score exists — start a silent background refresh so the overlay can update
@@ -622,7 +645,6 @@
     }
 
     const _finalScore = (mint && ns.lastTokenScore?.mint === mint) ? ns.lastTokenScore : score;
-    _addToHistory({ ts: Date.now(), mint, symbol: _finalScore?.symbol ?? null, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, decision, site: location.hostname });
 
     const _od = ns.lastOrderDetails;
     const _tradeUsd = _od?.inUsdValue ?? null;
@@ -641,6 +663,9 @@
       }
     }
     const _tradeSol = _tradeUsd == null ? (ns.lastPumpSolAmount ?? null) : null;
+
+    // _addToHistory AFTER SOL extraction so solAmountIn is populated for pump.fun buys
+    _addToHistory({ ts: Date.now(), mint, symbol: _finalScore?.symbol ?? null, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, decision, site: location.hostname });
 
     const _isHighRisk = (_finalScore?.score ?? 0) >= 50;
     const _evtName = decision === 'cancel'
@@ -872,6 +897,47 @@
       const SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, LOADING: 10 };
       const SEV_PILL  = { LOW: 'LOW', MEDIUM: 'MOD', HIGH: 'HIGH', CRITICAL: 'CRIT' };
 
+      // Within-tier danger priority — lower number = more dangerous = shown first.
+      // Severity is always sorted first; this is only the secondary key.
+      function _factorPriority(name) {
+        const n = (name ?? '').toLowerCase();
+        // ── CRITICAL tier ───────────────────────────────────────────────────
+        if (n.startsWith('bot factory'))             return 10; // automated rug pipeline
+        if (n.startsWith('bot-created'))             return 10;
+        if (n.includes('prev tokens went to zero'))  return 15; // confirmed serial rugger
+        if (n.startsWith('bundled launch'))          return 20; // coordinated insider buy
+        if (n.startsWith('unlimited supply'))        return 25; // mint authority — infinite dilution
+        if (n.startsWith('whale risk'))              return 30; // majority in one wallet
+        if (n.startsWith('active pump'))             return 35; // dump phase imminent
+        if (n.startsWith('volume collapsed'))        return 40; // trading dead
+        // ── HIGH tier ───────────────────────────────────────────────────────
+        if (n.startsWith('possible bundle'))         return 10; // coordinated buy
+        if (n.startsWith('freeze authority active')) return 15; // can freeze your wallet
+        if (n.startsWith('large holder'))            return 20; // single-wallet dump risk
+        if (n.startsWith('insider supply'))          return 25; // top-5 coordinated sell
+        if (n.startsWith('serial launcher'))         return 30; // 10+ token deployments
+        if (n.startsWith('new token: <'))            return 38; // <24h — highest early-rug window
+        if (n.startsWith('new token:'))              return 42; // <7d
+        if (n.startsWith('pump in progress'))        return 50; // FOMO trap
+        if (n.startsWith('low liquidity'))           return 55; // easy manipulation
+        if (n.startsWith('micro-cap'))               return 60; // tiny market cap
+        if (n.startsWith('volume dying'))            return 65; // activity collapsing
+        // ── MEDIUM tier ─────────────────────────────────────────────────────
+        if (n.startsWith('flagged risk'))            return 10; // RugCheck danger item
+        if (n.startsWith('copycat'))                 return 15; // impersonation
+        if (n.startsWith('lp fully unlocked'))       return 20; // exit-rug via LP pull
+        if (n.startsWith('lp mostly unlocked'))      return 22;
+        if (n.startsWith('concentrated'))            return 25; // notable single holder
+        if (n.includes('lp providers'))              return 30; // few LP = thin liquidity
+        if (n.startsWith('recent token'))            return 35; // <30d
+        if (n.startsWith('rising fast'))             return 40; // momentum risk
+        if (n.startsWith('repeat creator'))          return 45; // 3+ deploys
+        if (n.startsWith('small-cap'))               return 50; // susceptible to pumps
+        if (n.startsWith('volume fading'))           return 55; // declining interest
+        // default — unknown / informational factors go to end of their tier
+        return 99;
+      }
+
       // Returns the bot-creator factor if present in the score, else null.
       function _botFactor(sc) {
         return (sc?.factors ?? []).find(f => f.name && /bot(-created token|factory)/i.test(f.name)) ?? null;
@@ -891,10 +957,14 @@
 
       function _buildFactors(sc) {
         const botF = _botFactor(sc);
-        // Sort CRIT→HIGH→MEDIUM→LOW→LOADING; exclude bot factor (shown in banner)
+        // Sort CRIT→HIGH→MEDIUM→LOW; within each tier sort by danger priority
         const sorted = (sc?.factors ?? [])
           .filter(f => f !== botF)
-          .sort((a, b) => (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9))
+          .sort((a, b) => {
+            const sd = (SEV_ORDER[a.severity] ?? 9) - (SEV_ORDER[b.severity] ?? 9);
+            if (sd !== 0) return sd;
+            return _factorPriority(a.name) - _factorPriority(b.name);
+          })
           .slice(0, 10);
         _tipTexts = sorted.map(f => {
           if (f.severity === 'LOADING') return null;
@@ -1122,6 +1192,10 @@
       inUsdValue:  od?.inUsdValue  ?? null,
       outUsdValue: od?.outUsdValue ?? null,
       swapType:    od?.swapType ?? null,
+      // SOL amount for pump.fun buys where inUsdValue is unavailable at intercept time
+      solAmountIn: (od?.inUsdValue == null && ns.lastPumpSolAmount != null) ? ns.lastPumpSolAmount : null,
+      // Risk factors array for hover tooltip in history tab
+      factors: ns.lastTokenScore?.factors ?? null,
     };
     ns.recentSwaps.unshift(enriched);
     if (ns.recentSwaps.length > 50) ns.recentSwaps.pop();

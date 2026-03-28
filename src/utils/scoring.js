@@ -9,7 +9,7 @@
  *  - Removed ns.widgetCapturedTrade / ns.jupiterLiveQuote references
  *  - Cache is module-level (not attached to global namespace)
  *
- * Signals checked (15 active):
+ * Signals checked (16 active):
  *  1.  Mint authority (can devs print unlimited tokens?)
  *  2.  Freeze authority (can devs lock your tokens?)
  *  3.  Top-1 holder concentration
@@ -28,6 +28,9 @@
  * 15.  Serial deployer — how many tokens the creator wallet launched in last 30d
  *      (getRealDeployer + getDeployerTokenCount from extraction.js)
  *      +8 MEDIUM ≥2 tokens · +20 HIGH ≥4 tokens · +35 CRITICAL ≥10 tokens
+ * 16.  Bundle launch detection — Jito bundle manipulation at token creation
+ *      +40 CRITICAL ≥5 txs in creation slot · +20 HIGH 3-4 · 0 LOW 1-2
+ *      Uses standard getSignaturesForAddress RPC — no Helius key required
  *
  * Score 0–100: LOW <25 | MEDIUM 25–49 | HIGH 50–74 | CRITICAL ≥75
  */
@@ -213,6 +216,51 @@ async function _fetchGeckoTerminal(mint) {
   } catch (_) { return null; }
 }
 
+// ── Bundle Launch Detection (signal #16) ────────────────────────────────────
+// Detects Jito bundle manipulation at token creation — the primary pump.fun rug pattern.
+//
+// Uses standard getSignaturesForAddress RPC (newest-first, paginates backward up to
+// 2 pages / 2 000 sigs). When < 2 000 sigs total we have the full history; creation
+// slot (min slot) transaction count acts as a reliable bundle proxy.
+// Returns inconclusive for tokens with > 2 000 transactions (established tokens where
+// bundle detection is moot anyway).
+async function _fetchBundleLaunch(mint) {
+  try {
+    let allSigs = [];
+    let cursor;
+    for (let page = 0; page < 2; page++) {
+      const params = [mint, cursor ? { limit: 1000, before: cursor } : { limit: 1000 }];
+      const resp  = await _rpcCall('getSignaturesForAddress', params);
+      const batch = resp?.result ?? [];
+      if (!batch.length) break;
+      allSigs = allSigs.concat(batch);
+      if (batch.length < 1000) break; // reached the beginning of history
+      cursor = batch[batch.length - 1].signature;
+    }
+
+    if (!allSigs.length) return null;
+
+    // If still full after 2 pages the token has > 2 000 txs — creation slot unknown
+    if (allSigs.length >= 2000) {
+      return { bundleLevel: 'unknown', creationSlotTxCount: null, inconclusive: true };
+    }
+
+    const valid = allSigs.filter(s => s.slot && !s.err);
+    if (!valid.length) return null;
+
+    // Creation slot = minimum slot across the complete history
+    let creationSlot = valid[0].slot;
+    for (const s of valid) if (s.slot < creationSlot) creationSlot = s.slot;
+
+    const txCount = valid.filter(s => s.slot === creationSlot).length;
+    return {
+      bundleLevel: txCount >= 5 ? 'high' : txCount >= 3 ? 'medium' : 'low',
+      creationSlotTxCount: txCount,
+      inconclusive: false,
+    };
+  } catch (_) { return null; }
+}
+
 // ── RugCheck API: comprehensive risk report ───────────────────────────────────
 async function _fetchRugCheck(mint) {
   try {
@@ -255,7 +303,7 @@ const RUGCHECK_NOISE = [
   'metadata',
 ];
 
-function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData) {
+function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData, bundleLaunchData) {
   let score = 0;
   const factors = [];
 
@@ -635,6 +683,43 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
     }
   }
 
+  // ── 16. Bundle launch detection ──────────────────────────────────────────
+  // Checks whether multiple wallets bought in the token's creation slot —
+  // the on-chain fingerprint of a Jito bundle coordinated supply grab.
+  // +40 CRITICAL (≥5 wallets/txs) | +20 HIGH (3–4) | LOW (1–2) | skip (null/error)
+  if (bundleLaunchData != null && !bundleLaunchData.inconclusive) {
+    const { bundleLevel, creationSlotTxCount } = bundleLaunchData;
+    const count = creationSlotTxCount ?? 0;
+    if (bundleLevel === 'high') {
+      score += 40;
+      factors.push({
+        name: `Bundled launch: ${count} txs on creation block`,
+        severity: 'CRITICAL',
+        detail: `${count} transactions executed in the token\'s creation block \u2014 consistent with Jito bundle manipulation. Insiders pre-load supply for a coordinated dump on retail buyers.`,
+      });
+    } else if (bundleLevel === 'medium') {
+      score += 20;
+      factors.push({
+        name: `Possible bundle: ${count} txs in creation slot`,
+        severity: 'HIGH',
+        detail: `${count} transactions in the creation block. Consistent with a small Jito bundle \u2014 check top holder concentration for confirmation.`,
+      });
+    } else {
+      factors.push({
+        name: `Normal launch: ${count || 1} tx in creation block`,
+        severity: 'LOW',
+        detail: `Only ${count || 1} transaction${count === 1 ? '' : 's'} in the creation block. No bundle pattern detected.`,
+      });
+    }
+  } else if (bundleLaunchData?.inconclusive) {
+    factors.push({
+      name: 'Bundle check: inconclusive',
+      severity: 'LOW',
+      detail: 'Token has a high transaction count \u2014 creation block analysis unavailable. Check top holder concentration for insider supply signals.',
+    });
+  }
+  // bundleLaunchData === null \u2192 fetch failed silently; no factor added to avoid noise
+
   // ── Fallback: no data available ───────────────────────────────────────────
   if (!mintInfo && !holderData && !rugCheck && !dexData && !geckoData) {
     score += 15;
@@ -688,18 +773,19 @@ async function fetchTokenScore(mint, symbol, { onBase } = {}) {
   if (cached) return cached;
 
   try {
-    const [mintInfo, holderData, rugCheck, dexData, geckoData] = await Promise.all([
+    const [mintInfo, holderData, rugCheck, dexData, geckoData, bundleLaunchData] = await Promise.all([
       _fetchMintInfo(mint).catch(() => null),
       _fetchHolderData(mint).catch(() => null),
       _fetchRugCheck(mint).catch(() => null),
       _fetchDexScreener(mint).catch(() => null),
       _fetchGeckoTerminal(mint).catch(() => null),
+      _fetchBundleLaunch(mint).catch(() => null),
     ]);
 
     // Phase 1: partial result — notify caller immediately so the overlay can show factors
     // without waiting for the slow deployer RPC lookup (~5-10s).
     if (typeof onBase === 'function') {
-      const _partial = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, null, null);
+      const _partial = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, null, null, bundleLaunchData);
       _partial.factors.push({ name: 'Creator history — scanning on-chain…', severity: 'LOADING', detail: 'Checking how many tokens this wallet has deployed and how many went to zero.' });
       _partial._deployerPending = true;
       onBase(_partial);
@@ -733,7 +819,7 @@ async function fetchTokenScore(mint, symbol, { onBase } = {}) {
       }
     } catch (_) { /* deployer lookup is best-effort */ }
 
-    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData);
+    const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData, bundleLaunchData);
     _setCached(mint, result);
     return result;
   } catch (err) {

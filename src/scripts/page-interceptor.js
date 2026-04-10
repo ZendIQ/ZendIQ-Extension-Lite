@@ -1292,7 +1292,7 @@
               <div class="__zq_ob_num">3</div>
               <div class="__zq_ob_stxt">
                 <div class="__zq_ob_stitle">ZendIQ scans the token</div>
-                <div class="__zq_ob_sdesc">Before you sign, we check 15 on-chain signals — mint authority, holder concentration, rug flags, LP lock, deployer history, and more.</div>
+                <div class="__zq_ob_sdesc">Before you sign, we check 16 on-chain signals — mint authority, holder concentration, rug flags, LP lock, deployer history, and more.</div>
               </div>
             </div>
             <div class="__zq_ob_step">

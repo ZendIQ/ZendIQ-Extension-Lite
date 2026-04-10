@@ -2,7 +2,7 @@
 
 > **Free Solana swap guardian.** Analyses token risk and warns you before you sign — on Jupiter, Raydium, and Pump.fun.
 >
-> 🌐 [zendiq.ai](https://zendiq.ai) · Chrome Web Store *(coming soon)*
+> 🌐 [zendiq.ai](https://zendiq.ai) · [Chrome Web Store](https://chromewebstore.google.com/detail/piacdmhfdpnddopdojdfkjbbbcpgpblf)
 
 ---
 
@@ -25,25 +25,26 @@ It works on **Jupiter**, **Raydium**, and **Pump.fun** with no wallet connection
 | 50–74 | 🟠 HIGH | Significant red flags — review carefully |
 | 75–100 | 🔴 CRITICAL | Multiple severe warning signs |
 
-### 15 scoring signals
+### 16 scoring signals
 
 | Signal | Source |
 |--------|--------|
-| Mint authority (can devs print tokens?) | Solana RPC |
-| Freeze authority (can devs lock your wallet?) | Solana RPC |
+| Mint authority (can devs print unlimited tokens?) | Solana RPC |
+| Freeze authority (can devs lock your tokens?) | Solana RPC |
 | Top-1 holder concentration | Solana RPC |
 | Top-5 holder concentration | Solana RPC |
-| RugCheck risk flags (danger / warning items) | RugCheck API |
-| Rug-pull flag | RugCheck API |
+| RugCheck risk flags (known rug, danger / warning items) | RugCheck API |
+| Speculative / memecoin market risk | Token metadata |
 | LP lock status | RugCheck API |
-| Speculative / memecoin keyword detection | Token metadata |
 | 3-month price change | GeckoTerminal |
 | Long-term price change (up to 6 months) | GeckoTerminal |
-| Volume trend — 7-day vs 30–90-day baseline | GeckoTerminal |
-| Token age (< 24 h / < 7 d / < 30 d) | DexScreener |
+| Volume trend / activity collapse — 7-day vs 30–90-day baseline | GeckoTerminal |
+| Token age | DexScreener |
 | 24 h price change | DexScreener |
 | Liquidity depth | DexScreener |
 | Market cap | DexScreener |
+| Serial deployer — tokens the creator wallet launched (last 30 days) | Solana RPC |
+| Bundle launch detection — Jito bundle manipulation at token creation | Solana RPC |
 
 ### Wallet Security tab
 
@@ -59,7 +60,9 @@ No transaction is required. The scan is read-only.
 
 ## Install
 
-### From Chrome Web Store *(coming soon)*
+### From Chrome Web Store
+
+[Install ZendIQ Lite](https://chromewebstore.google.com/detail/piacdmhfdpnddopdojdfkjbbbcpgpblf)
 
 ### Manual / Developer install
 
@@ -112,7 +115,7 @@ The 9 event types currently logged:
 | Transaction signatures | `chrome.storage.local` only |
 | Full swap history (amounts, token pairs, quote accuracy) | `chrome.storage.local` only |
 | Wallet security scan results (approvals, drainer matches) | `chrome.storage.local` only |
-| Full risk factor breakdown (all 15 signal details) | Computed and displayed locally; never uploaded |
+| Full risk factor breakdown (all 16 signal details) | Computed and displayed locally; never uploaded |
 | RugCheck / DexScreener / GeckoTerminal API responses | Used locally for scoring; never forwarded |
 | Deployer address or on-chain transaction history | Used locally for scoring; never forwarded |
 
@@ -171,7 +174,7 @@ zendiq-lite/
 │       │   ├── popup-settings.js Settings tab
 │       │   └── styles.css       Popup styles
 │       └── utils/
-│           ├── scoring.js       15-signal risk scoring engine
+│           ├── scoring.js       16-signal risk scoring engine
 │           ├── extraction.js    On-chain deployer lookup
 │           ├── rpc.js           Popup ↔ background message helpers
 │           └── analytics.js     Fire-and-forget event logger

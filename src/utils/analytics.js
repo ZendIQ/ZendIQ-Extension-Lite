@@ -1,24 +1,46 @@
-/**
+﻿/**
  * ZendIQ Lite – analytics.js
- * logEvent(type, data) — fire-and-forget event logging to the Lite backend.
- *
- * No-ops gracefully when liteBackendUrl is not configured or the request fails.
- * Never throws; never blocks the caller.
+ * Fire-and-forget event logging helpers for popup and content scripts.
+ * Background.js injects install_id into every outbound payload via the LOG_EVENT handler.
  */
 
 const BACKEND_URL = 'https://zendiq-backend.onrender.com';
 
+// ── logEvent — backward-compat event logger ───────────────────────────────────
 function logEvent(type, data) {
   if (!type || typeof type !== 'string') return;
-  const url = BACKEND_URL + '/api/events';
   chrome.runtime.sendMessage({
-    type: 'LOG_EVENT',
-    url,
+    type:    'LOG_EVENT',
+    url:     BACKEND_URL + '/api/events',
     payload: {
       type,
-      data: data ?? {},
-      ts: Date.now(),
-      v: chrome.runtime.getManifest().version,
+      source: 'lite',
+      data:   data ?? {},
+      ts:     Date.now(),
+      v:      chrome.runtime.getManifest().version,
     },
   }, () => void chrome.runtime.lastError);
 }
+
+// ── Category-based helpers (route to structured tables via background.js) ─────
+// background.js injects install_id into every outbound payload.
+function _logCat(category, type, data) {
+  chrome.runtime.sendMessage({
+    type:    'LOG_EVENT',
+    url:     BACKEND_URL + '/api/events',
+    payload: {
+      category,
+      type,
+      source: 'lite',
+      data:   data ?? {},
+      ts:     Date.now(),
+      v:      chrome.runtime.getManifest().version,
+    },
+  }, () => void chrome.runtime.lastError);
+}
+
+function logSession(type, data)      { _logCat('session', type, data); }
+function logTrade(data)              { _logCat('trade', 'trade', data); }
+function logMev(data)                { _logCat('mev', 'mev_detection', data); }
+function logError(errCategory, data) { _logCat('error', errCategory, data); }
+function logFunnel(event, data)      { _logCat('funnel', event, { event, ...(data ?? {}) }); }

@@ -33,6 +33,13 @@
     const wallet = window.solana ?? window.phantom?.solana;
     if (!wallet || ns.walletHooked) return;
     ns.walletHooked = true;
+    const _wn = window.solana?.isPhantom  ? 'phantom'
+              : window.solana?.isSolflare ? 'solflare'
+              : window.solana?.isGlow     ? 'glow'
+              : window.solana?.isBrave    ? 'brave'
+              : 'unknown';
+    ns.walletAdapter = _wn;
+    try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'session', eventType: 'start', data: { type: 'start', wallet: _wn, dex: 'jup.ag' } }, '*'); } catch (_) {}
 
     const realSign  = wallet.signTransaction?.bind(wallet);
     const realSAS   = wallet.signAndSendTransaction?.bind(wallet);
@@ -121,7 +128,12 @@
       }
     } catch (_) {}
 
-    if (account?.address) _savePubkey(account.address);
+    if (account?.address) {
+      _savePubkey(account.address);
+      const _wname = w?.name ?? 'unknown';
+      ns.walletAdapter = _wname;
+      try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'session', eventType: 'start', data: { type: 'start', wallet: _wname, dex: 'jup.ag' } }, '*'); } catch (_) {}
+    }
 
     // Subscribe to account changes (wallet connect / switch) for Wallet Standard
     try {
@@ -291,4 +303,9 @@
   // Subscribe to navigator.wallets registry — catches Jupiter Wallet and other
   // Wallet Standard wallets that register AFTER document_start via navigator.wallets.push().
   _subscribeWsRegistry();
+
+  // Session end on page unload
+  window.addEventListener('beforeunload', () => {
+    try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'session', eventType: 'end', data: { type: 'end', wallet: ns.walletAdapter ?? 'unknown', dex: 'jup.ag' } }, '*'); } catch (_) {}
+  });
 })();

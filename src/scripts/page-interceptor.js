@@ -672,6 +672,13 @@
       ? (_isHighRisk ? 'avoided_high_risk' : 'transaction_aborted')
       : (_isHighRisk ? 'proceeded_high_risk' : 'transaction_completed');
     window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: _evtName, data: { mint, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, trade_usd: _tradeUsd, trade_sol: _tradeSol, site: location.hostname } }, '*');
+    // Structured trade event for backend analytics
+    try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'trade', eventType: _evtName, data: {
+      dex: location.hostname.includes('pump') ? 'pump.fun' : 'jup.ag',
+      output_mint: mint ?? null, trade_usd: _tradeUsd ?? null, trade_sol: _tradeSol ?? null,
+      user_action: decision === 'cancel' ? 'cancelled' : 'proceeded',
+      success: decision !== 'cancel', bot_risk_score: _finalScore?.score ?? null,
+    }}, '*'); } catch (_) {}
 
     if (decision === 'cancel') return; // do nothing — swap never continues
 
@@ -773,6 +780,13 @@
       ? (_isHighRisk2 ? 'avoided_high_risk' : 'transaction_aborted')
       : (_isHighRisk2 ? 'proceeded_high_risk' : 'transaction_completed');
     window.postMessage({ type: 'ZQLITE_LOG_EVENT', eventType: _evtName2, data: { mint, score: _finalScore?.score ?? null, level: _finalScore?.level ?? null, trade_usd: _tradeUsd2, trade_sol: _tradeSol2, site: host } }, '*');
+    // Structured trade event for backend analytics
+    try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'trade', eventType: _evtName2, data: {
+      dex: host.includes('pump') ? 'pump.fun' : 'jup.ag',
+      output_mint: mint ?? null, trade_usd: _tradeUsd2 ?? null, trade_sol: _tradeSol2 ?? null,
+      user_action: decision === 'cancel' ? 'cancelled' : 'proceeded',
+      success: decision !== 'cancel', bot_risk_score: _finalScore?.score ?? null,
+    }}, '*'); } catch (_) {}
 
     if (decision === 'cancel') throw new Error('ZendIQ Lite: swap cancelled by user (token risk)');
     const _walletResult = await originalFn(tx, opts);
@@ -874,6 +888,8 @@
   // Always requires manual confirmation — no auto-proceed.
   // scorePromise: optional live fetch; overlay updates its DOM when it resolves.
   function _showOverlay(score, scorePromise, fullPromise) {
+    // Structured funnel event — widget was displayed to user
+    try { window.postMessage({ type: 'ZQLITE_LOG_EVENT', category: 'funnel', eventType: 'widget_shown', data: { event: 'widget_shown', dex: location.hostname.includes('pump') ? 'pump.fun' : 'jup.ag' } }, '*'); } catch (_) {}
     return new Promise((resolve) => {
       _injectCSS();
 

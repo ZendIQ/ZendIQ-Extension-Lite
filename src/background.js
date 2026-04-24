@@ -17,6 +17,21 @@ const FETCH_JSON_ALLOWED = new Set([
 const BACKEND_URL = 'https://zendiq-backend.onrender.com';
 const _backendOrigin = new URL(BACKEND_URL).origin;
 
+// ── Anonymous install identifier ────────────────────────────────────────────
+// UUID generated once per browser profile, never transmitted with PII.
+const _IID_KEY         = '_zqlite_install_id';
+let   _cachedInstallId = null;
+async function _getInstallId() {
+  if (_cachedInstallId) return _cachedInstallId;
+  return new Promise(resolve => {
+    chrome.storage.local.get([_IID_KEY], r => {
+      if (r[_IID_KEY]) { _cachedInstallId = r[_IID_KEY]; return resolve(r[_IID_KEY]); }
+      const id = crypto.randomUUID();
+      chrome.storage.local.set({ [_IID_KEY]: id }, () => { _cachedInstallId = id; resolve(id); });
+    });
+  });
+}
+
 // RPC endpoints tried in order; falls back on hard error
 const RPC_ENDPOINTS = [
   'https://solana.publicnode.com',
@@ -24,24 +39,36 @@ const RPC_ENDPOINTS = [
 ];
 
 // ── Analytics helpers ────────────────────────────────────────────────────────
-// Fire-and-forget: POST an event to the user-configured backend.
-// Silently no-ops when no backend URL has been set.
-function _logToBackend(type, data) {
+// Fire-and-forget: POST an event to the backend. Always injects install_id.
+async function _logToBackend(type, data, extras) {
+  const install_id = await _getInstallId();
   fetch(BACKEND_URL + '/api/events', {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, data: data ?? {}, v: chrome.runtime.getManifest().version, ts: Date.now(), ext_id: chrome.runtime.id }),
+    body:    JSON.stringify({
+      type, source: 'lite', install_id,
+      data: data ?? {},
+      v:   chrome.runtime.getManifest().version,
+      ts:  Date.now(),
+      ext_id: chrome.runtime.id,
+      ...(extras ?? {}),
+    }),
   }).catch(() => {});
 }
 
 // extension_installed — fires once on fresh install or on any version update
 chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
   if (reason !== 'install' && reason !== 'update') return;
+  const ua      = navigator.userAgent;
+  const locale  = navigator.language ?? '';
+  const country = locale.includes('-') ? locale.split('-').pop() : locale.toUpperCase();
+  const os      = ua.includes('Windows') ? 'windows' : ua.includes('Mac OS X') ? 'mac' : ua.includes('Linux') ? 'linux' : 'other';
+  const browser = ua.includes('Brave') ? 'brave' : 'chrome';
   _logToBackend('extension_installed', {
-    reason,
-    prev_version: previousVersion ?? null,
-    browser: navigator.userAgent.includes('Brave') ? 'brave' : 'chrome',
-  });
+    reason, prev_version: previousVersion ?? null,
+    browser, os, locale: locale.slice(0, 10),
+    country: (typeof country === 'string' && country.length === 2) ? country : null,
+  }, { category: 'install' });
 });
 
 // daily_active — at most once per UTC calendar day on any service worker wake
@@ -51,7 +78,7 @@ chrome.runtime.onInstalled.addListener(({ reason, previousVersion }) => {
     const { _zqlite_last_active_day } = result ?? {};
     if (_zqlite_last_active_day === today) return;
     chrome.storage.local.set({ _zqlite_last_active_day: today });
-    _logToBackend('daily_active', { day: today });
+    _logToBackend('daily_active', { day: today }, { category: 'heartbeat' });
   });
 })();
 
@@ -261,21 +288,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === 'LOG_EVENT') {
     const { url, payload } = msg;
     if (!url || typeof url !== 'string') { sendResponse({ ok: false }); return true; }
-    {
-      let urlOriginOk = false;
-      try { urlOriginOk = new URL(url).origin === _backendOrigin; } catch {}
-      if (!urlOriginOk) {
-        sendResponse({ ok: false, error: 'Invalid backend URL' });
-        return;
-      }
+    let urlOriginOk = false;
+    try { urlOriginOk = new URL(url).origin === _backendOrigin; } catch {}
+    if (!urlOriginOk) { sendResponse({ ok: false, error: 'Invalid backend URL' }); return true; }
+    // Inject install_id so structured-table routes have it even from popup scripts
+    _getInstallId().then(install_id => {
       fetch(url, {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload ?? {}),
-      })
-        .then(() => sendResponse({ ok: true }))
-        .catch(() => sendResponse({ ok: false }));
-    }
+        body:    JSON.stringify({ ...(payload ?? {}), install_id }),
+      }).catch(() => {});
+    });
+    sendResponse({ ok: true });
     return true;
   }
 

@@ -39,21 +39,95 @@ const RPC_ENDPOINTS = [
 ];
 
 // ── Analytics helpers ────────────────────────────────────────────────────────
-// Fire-and-forget: POST an event to the backend. Always injects install_id.
+// OPS-169. fetch() only rejects on network failure, so an HTTP 403/400 resolves
+// normally — the previous `.catch(() => {})` discarded every server-side rejection
+// without either end noticing. That is how a structured-ingest path can return zero
+// rows for months while looking healthy.
+//
+// Two surfaces, deliberately:
+//   1. a local ring buffer, for live debugging in the service-worker console;
+//   2. `prior_failures` attached to the next SUCCESSFUL send, so the server learns
+//      about an outage on recovery even if nobody ever opens that console.
+// (1) alone would recreate the original defect one level up: an unread failure log
+// is as silent as a swallowed 4xx.
+const _FAIL_KEY = '_zqlite_telemetry_failures';
+const _FAIL_MAX = 20;
+
+function _recordSendFailure(status, type, detail) {
+  try {
+    chrome.storage.local.get([_FAIL_KEY], (r) => {
+      const arr = Array.isArray(r?.[_FAIL_KEY]) ? r[_FAIL_KEY] : [];
+      arr.push({ t: Date.now(), status, type, detail: String(detail ?? '').slice(0, 200) });
+      chrome.storage.local.set({ [_FAIL_KEY]: arr.slice(-_FAIL_MAX) });
+    });
+  } catch (_) {}
+}
+
+// Summarise buffered failures so they can ride along on the next request.
+function _peekFailures() {
+  return new Promise((resolve) => {
+    try {
+      chrome.storage.local.get([_FAIL_KEY], (r) => {
+        const arr = Array.isArray(r?.[_FAIL_KEY]) ? r[_FAIL_KEY] : [];
+        if (!arr.length) return resolve(null);
+        resolve({
+          reported: arr.length,
+          summary: {
+            count:       arr.length,
+            oldest_ts:   arr[0].t,
+            last_status: arr[arr.length - 1].status,
+          },
+        });
+      });
+    } catch (_) { resolve(null); }
+  });
+}
+
+// Drop only the entries we actually reported — failures logged while the reporting
+// request was in flight must survive.
+function _clearReportedFailures(n) {
+  try {
+    chrome.storage.local.get([_FAIL_KEY], (r) => {
+      const arr = Array.isArray(r?.[_FAIL_KEY]) ? r[_FAIL_KEY] : [];
+      chrome.storage.local.set({ [_FAIL_KEY]: arr.slice(n) });
+    });
+  } catch (_) {}
+}
+
+// Single exit point for every analytics POST. Never throws; always resolves.
+async function _postEvent(url, bodyObj, typeLabel) {
+  const pending = await _peekFailures();
+  try {
+    const r = await fetch(url, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(pending ? { ...bodyObj, prior_failures: pending.summary } : bodyObj),
+    });
+    if (r.ok) {
+      if (pending) _clearReportedFailures(pending.reported);
+      return;
+    }
+    let detail = '';
+    try { detail = (await r.text()).slice(0, 200); } catch (_) {}
+    console.warn('[ZendIQ] telemetry rejected', r.status, typeLabel, detail);
+    _recordSendFailure(r.status, typeLabel, detail);
+  } catch (err) {
+    const m = err?.message ?? String(err);
+    console.warn('[ZendIQ] telemetry send failed', typeLabel, m);
+    _recordSendFailure(0, typeLabel, m);
+  }
+}
+
 async function _logToBackend(type, data, extras) {
   const install_id = await _getInstallId();
-  fetch(BACKEND_URL + '/api/events', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({
-      type, source: 'lite', install_id,
-      data: data ?? {},
-      v:   chrome.runtime.getManifest().version,
-      ts:  Date.now(),
-      ext_id: chrome.runtime.id,
-      ...(extras ?? {}),
-    }),
-  }).catch(() => {});
+  return _postEvent(BACKEND_URL + '/api/events', {
+    type, source: 'lite', install_id,
+    data: data ?? {},
+    v:   chrome.runtime.getManifest().version,
+    ts:  Date.now(),
+    ext_id: chrome.runtime.id,
+    ...(extras ?? {}),
+  }, type);
 }
 
 // extension_installed — fires once on fresh install or on any version update
@@ -291,14 +365,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     let urlOriginOk = false;
     try { urlOriginOk = new URL(url).origin === _backendOrigin; } catch {}
     if (!urlOriginOk) { sendResponse({ ok: false, error: 'Invalid backend URL' }); return true; }
-    // Inject install_id so structured-table routes have it even from popup scripts
-    _getInstallId().then(install_id => {
-      fetch(url, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ ...(payload ?? {}), install_id }),
-      }).catch(() => {});
-    });
+    // Inject install_id so structured-table routes have it even from popup scripts.
+    // NOTE: deliberately does NOT inject ext_id — adding it here would change which
+    // requests the server's ext-ID gate rejects, which is a separate reviewed step.
+    _getInstallId().then(install_id =>
+      _postEvent(url, { ...(payload ?? {}), install_id }, payload?.type ?? 'LOG_EVENT'));
     sendResponse({ ok: true });
     return true;
   }

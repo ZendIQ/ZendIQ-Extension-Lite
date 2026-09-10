@@ -215,7 +215,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: ac.signal })
         .then(r => { clearTimeout(t); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(data => {
-          if (data?.error && rest.length) { tryNext(rest); return; }
+          // A JSON-RPC error arrives in the body of a 200 response. Reporting it as
+          // ok:true leaves callers reading `.result` as undefined, so a rejection
+          // (e.g. -32015 on a v1 tx) is indistinguishable from an empty result.
+          if (data?.error) {
+            if (rest.length) { tryNext(rest); return; }
+            sendResponse({ ok: false, error: data.error.message ?? ('RPC error ' + data.error.code) });
+            return;
+          }
           sendResponse({ ok: true, data });
         })
         .catch(() => { clearTimeout(t); tryNext(rest); });
@@ -284,8 +291,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       });
     };
     (async () => {
+      // maxSupportedTransactionVersion must be >= the highest version mainnet can
+      // produce, or the RPC rejects the ENTIRE call with -32015. v1 activates
+      // at epoch 1035, 2026-09-15 (SIMD-0296).
       const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTransaction',
-        params: [signature, { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 }] });
+        params: [signature, { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 1 }] });
       for (let attempt = 0; attempt < 15; attempt++) {
         await new Promise(r => setTimeout(r, 3000));
         try {

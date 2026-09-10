@@ -317,7 +317,7 @@
 
           const res = await ns.rpcCall('getTransaction', [
             signature,
-            { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+            { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 1 },
           ]);
           const tx = res?.result;
           if (!tx?.meta) continue; // not confirmed yet — retry

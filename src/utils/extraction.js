@@ -28,6 +28,11 @@
 const _SPL_TOKEN    = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss624VQ5SDWKn';
 const _SPL_TOKEN_22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 
+// Must be >= the highest tx version mainnet can produce, or the RPC rejects the
+// ENTIRE getTransaction call with -32015 — not just the versioned tx.
+// v1 (SIMD-0296) activates at epoch 1035, 2026-09-15.
+const MAX_TX_VERSION = 1;
+
 // rpcCall is provided by page-config.js via window.__zqlite.rpcCall
 function rpcCall(method, params) {
   return window.__zqlite.rpcCall(method, params);
@@ -72,7 +77,7 @@ async function getRealDeployer(mint) {
     // Fetch that oldest transaction — fee-payer is accountKeys[0]
     const txResp = await rpcCall('getTransaction', [
       oldest,
-      { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+      { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
     ]);
     const keys = txResp?.result?.transaction?.message?.staticAccountKeys
                ?? txResp?.result?.transaction?.message?.accountKeys
@@ -106,7 +111,7 @@ async function getDeployerTokenData(deployerAddress, windowDays = 30) {
       toCheck.map(s =>
         rpcCall('getTransaction', [
           s.signature,
-          { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+          { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
         ]).catch(() => null)
       )
     );

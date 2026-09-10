@@ -76,12 +76,20 @@
         'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
       ];
       let allAccounts = [];
+      let programsOk  = 0;
       for (const programId of PROGRAMS) {
         try {
           const resp  = await ns.rpcCall('getTokenAccountsByOwner', [_pubkey, { programId }, { encoding: 'jsonParsed' }]);
-          allAccounts = allAccounts.concat(resp?.result?.value ?? []);
-        } catch (_) {}
+          const value = resp?.result?.value;
+          if (!Array.isArray(value)) throw new Error('malformed RPC response');
+          allAccounts = allAccounts.concat(value);
+          programsOk++;
+        } catch (_) { /* tallied below — a partial scan must not report as a complete one */ }
       }
+      // Nothing was actually read, so there is no basis for a verdict. Scoring 100 here
+      // would read as "no approvals found" when it really means "not checked".
+      if (programsOk === 0) throw new Error('Could not reach Solana RPC — approvals were not checked');
+      const partialScan = programsOk < PROGRAMS.length;
       totalAccounts = allAccounts.length;
 
       for (const acct of allAccounts) {
@@ -119,13 +127,16 @@
       let autoApproveDeduction = 0;
       if (autoWarn) { findings.push({ severity: 'WARN', ...autoWarn }); autoApproveDeduction = 20; }
 
-      if (!findings.some(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')) {
+      // A partial scan can still prove a problem, but it can never prove the absence of one.
+      if (partialScan) {
+        findings.unshift({ severity: 'WARN', text: 'Approval scan incomplete', detail: 'One token program could not be reached — re-scan to finish checking.' });
+      } else if (!findings.some(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')) {
         findings.unshift({ severity: 'OK', text: `${totalAccounts} accounts scanned — no harmful approvals found`, detail: 'Approval scan complete' });
       }
 
       ns.walletSecurityResult = { score, autoApproveDeduction, checkedAt: Date.now(), pubkey: _pubkey, walletType, totalAccounts, unlimitedApprovals: unlimitedList, badContracts: knownBadList, findings };
     } catch (e) {
-      ns.walletSecurityResult = { score: null, checkedAt: Date.now(), pubkey: _pubkey, walletType: detectWalletType(), totalAccounts, unlimitedApprovals: [], badContracts: [], findings: [{ severity: 'WARN', text: 'Security check failed', detail: e.message?.slice(0, 100) ?? 'Unknown error' }], error: e.message };
+      ns.walletSecurityResult = { score: null, checkedAt: Date.now(), pubkey: _pubkey, walletType: detectWalletType(), totalAccounts, unlimitedApprovals: [], badContracts: [], findings: [{ severity: 'WARN', text: 'Security check could not run', detail: (e.message?.slice(0, 120) ?? 'Unknown error') + ' — your approvals were not checked, so this is not an all-clear.' }], error: e.message };
     } finally {
       ns.walletSecurityChecking = false;
       const r = ns.walletSecurityResult;

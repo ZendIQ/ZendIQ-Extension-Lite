@@ -377,13 +377,20 @@ async function runCheck() {
       'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
     ];
     let allAccounts = [];
+    let programsOk  = 0;
     for (const programId of PROGRAMS) {
       try {
         const resp  = await rpcCall('getTokenAccountsByOwner', [pubkey, { programId }, { encoding: 'jsonParsed' }]);
-        const value = resp?.result?.value ?? [];
+        const value = resp?.result?.value;
+        if (!Array.isArray(value)) throw new Error('malformed RPC response');
         allAccounts = allAccounts.concat(value);
-      } catch (_) { /* one program failing is OK */ }
+        programsOk++;
+      } catch (_) { /* tallied below — a partial scan must not report as a complete one */ }
     }
+    // Nothing was actually read, so there is no basis for a verdict. Scoring 100 here
+    // would read as "no approvals found" when it really means "not checked".
+    if (programsOk === 0) throw new Error('Could not reach Solana RPC — approvals were not checked');
+    const partialScan = programsOk < PROGRAMS.length;
     totalAccounts = allAccounts.length;
 
     for (const acct of allAccounts) {
@@ -530,7 +537,15 @@ async function runCheck() {
 
     const autoApproveDeduction = autoWarn ? 20 : 0;
 
-    if (!findings.some(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')) {
+    // A partial scan can still prove a problem, but it can never prove the absence of one.
+    if (partialScan) {
+      findings.unshift({
+        severity: 'WARN',
+        text:     'Approval scan incomplete',
+        detail:   'One token program could not be reached — re-scan to finish checking.',
+        tooltip:  'Only part of your wallet was read. Approvals held under the token program that failed have NOT been checked, so a clean result here is not an all-clear. Click Re-check to try again.',
+      });
+    } else if (!findings.some(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')) {
       findings.unshift({
         severity: 'OK',
         text:     unlimitedList.length === 0
@@ -553,7 +568,7 @@ async function runCheck() {
     _secResult = {
       score: null, checkedAt: Date.now(), pubkey, walletType: 'unknown',
       totalAccounts, unlimitedApprovals: [], badContracts: [], autoApproveDeduction: 0,
-      findings: [{ severity: 'WARN', text: 'Security check failed', detail: e.message?.slice(0, 100) ?? 'Unknown error' }],
+      findings: [{ severity: 'WARN', text: 'Security check could not run', detail: (e.message?.slice(0, 120) ?? 'Unknown error') + ' — your approvals were not checked, so this is not an all-clear.' }],
     };
   } finally {
     _secChecking = false;

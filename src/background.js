@@ -9,8 +9,9 @@ const FETCH_JSON_ALLOWED = new Set([
   'https://api.rugcheck.xyz',
   'https://api.dexscreener.com',
   'https://api.geckoterminal.com',
-  'https://api.mainnet-beta.solana.com',
+  'https://public.rpc.solanavibestation.com',
   'https://solana.publicnode.com',
+  'https://solana-rpc.publicnode.com',
 ]);
 
 // Backend URL — hardcoded for the store build.
@@ -32,10 +33,16 @@ async function _getInstallId() {
   });
 }
 
-// RPC endpoints tried in order; falls back on hard error
+// RPC endpoints tried in order; falls back on hard error.
+// Measured from the service worker 2026-09-10 (OPS-202/OPS-204): api.mainnet-beta.solana.com
+// 403s any request carrying an Origin header, so it can never serve an extension and was
+// removed. Both publicnode hosts 403 getTokenAccountsByOwner specifically while serving other
+// methods, so solanavibestation leads — it is the only endpoint that serves the wallet scan.
 const RPC_ENDPOINTS = [
+  'https://public.rpc.solanavibestation.com',
   'https://solana.publicnode.com',
-  'https://api.mainnet-beta.solana.com',
+  // Same operator as solana.publicnode.com — a distinct host, not independent capacity.
+  'https://solana-rpc.publicnode.com',
 ];
 
 // ── Analytics helpers ────────────────────────────────────────────────────────

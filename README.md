@@ -145,7 +145,7 @@ The extension requests the following browser permissions:
 | `https://api.rugcheck.xyz/*` | Fetch RugCheck risk flags for the output token |
 | `https://api.dexscreener.com/*` | Fetch token age, liquidity, 24 h price change |
 | `https://api.geckoterminal.com/*` | Fetch price history and volume trend |
-| `https://api.mainnet-beta.solana.com/*`, `https://solana.publicnode.com/*` | On-chain RPC calls (mint authority, holder data, wallet accounts) |
+| `https://public.rpc.solanavibestation.com/*`, `https://solana.publicnode.com/*`, `https://solana-rpc.publicnode.com/*` | On-chain RPC calls (mint authority, holder data, wallet accounts) |
 
 No payment APIs, social networks, or ad networks are contacted.
 
@@ -215,7 +215,7 @@ All free, no API key required:
 
 | API | Used for |
 |---|---|
-| [Solana RPC](https://solana.com/) (publicnode.com + mainnet-beta) | Mint authority, freeze authority, holder data |
+| [Solana RPC](https://solana.com/) (Solana Vibe Station + PublicNode) | Mint authority, freeze authority, holder data |
 | [RugCheck.xyz](https://rugcheck.xyz/) | Comprehensive risk report |
 | [DexScreener](https://dexscreener.com/) | Price, liquidity, market cap, token age |
 | [GeckoTerminal](https://www.geckoterminal.com/) | 3M + 6M price history, volume trend |

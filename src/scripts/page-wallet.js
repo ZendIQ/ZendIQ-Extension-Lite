@@ -19,10 +19,16 @@
   // ── Resolve wallet pubkey ─────────────────────────────────────────────────
   ns.resolveWalletPubkey = function () {
     try {
-      const pk = window.solana?.publicKey?.toBase58?.()
-        ?? window.phantom?.solana?.publicKey?.toBase58?.()
-        ?? ns._wsAccount?.address
-        ?? null;
+      // Ordered widest-first: window.solana is whichever adapter the DEX is currently
+      // driving, so it wins over any specific vendor global that may also be present.
+      for (const w of [window.solana, window.phantom?.solana, window.solflare,
+                       window.backpack?.solana, window.braveSolana, window.jupiterWallet]) {
+        const raw = w?.publicKey;
+        if (!raw) continue;
+        const str = typeof raw === 'string' ? raw : (raw?.toBase58?.() ?? raw?.toString?.() ?? '');
+        if (str.length >= 32) { _savePubkey(str); return str; }
+      }
+      const pk = ns._wsAccount?.address ?? null;
       if (pk) _savePubkey(pk);
       return pk ?? ns.walletPubkey ?? null;
     } catch (_) { return ns.walletPubkey ?? null; }
@@ -31,8 +37,14 @@
   // ── Legacy wallet hook (window.solana / Phantom adapter) ─────────────────
   function hookLegacyWallet() {
     const wallet = window.solana ?? window.phantom?.solana;
-    if (!wallet || ns.walletHooked) return;
-    ns.walletHooked = true;
+    if (!wallet) return;
+    // Identity, not a boolean: switching wallet in the DEX replaces the adapter object,
+    // and a boolean guard would keep us hooked to the wallet the user just left.
+    if (ns.walletHooked && ns._hookedSolanaObj === wallet) return;
+    ns.walletHooked     = true;
+    ns._hookedSolanaObj = wallet;
+    if (wallet.__zqlite_wrapped) return; // already wrapped by an earlier pass or the global sweep
+    wallet.__zqlite_wrapped = true;
     const _wn = window.solana?.isPhantom  ? 'phantom'
               : window.solana?.isSolflare ? 'solflare'
               : window.solana?.isGlow     ? 'glow'
@@ -83,6 +95,20 @@
   }
 
   // ── Wallet Standard hook ──────────────────────────────────────────────────
+  // Adopt a wallet as the active one. Registry order is not the wallet the DEX is using —
+  // with Phantom, Solflare and Jupiter all installed, first-wins picks the wrong one, so a
+  // wallet whose account matches window.solana always takes precedence.
+  function _adoptWsWallet(w) {
+    if (!w) return;
+    let pk = null;
+    try { pk = window.solana?.publicKey?.toString?.() ?? null; } catch (_) {}
+    const matchesActive = pk && w.accounts?.some(a => a?.address === pk);
+    if (!ns._wsWallet || matchesActive) {
+      ns._wsWallet  = w;
+      ns._wsAccount = (pk && w.accounts?.find(a => a?.address === pk)) ?? w.accounts?.[0] ?? null;
+    }
+  }
+
   function hookWsWallet(w, account) {
     if (!w?.features) return;
 
@@ -138,8 +164,17 @@
     // Subscribe to account changes (wallet connect / switch) for Wallet Standard
     try {
       w.features?.['standard:events']?.on?.('change', ({ accounts }) => {
-        const addr = accounts?.[0]?.address;
-        if (addr) { _savePubkey(addr); ns._wsAccount = accounts[0]; }
+        if (!accounts) return;
+        if (accounts.length > 0) {
+          // Connected or switched account — this is now the wallet in use.
+          ns._wsWallet  = w;
+          ns._wsAccount = accounts[0];
+          if (accounts[0]?.address) _savePubkey(accounts[0].address);
+        } else if (ns._wsWallet === w) {
+          // Disconnected — clear so the next resolve picks up whichever wallet is now active.
+          ns._wsWallet  = null;
+          ns._wsAccount = null;
+        }
       });
     } catch (_) {}
   }
@@ -187,7 +222,7 @@
         const origReg = opts.detail.register;
         opts.detail.register = function (wallet) {
           hookWsWallet(wallet, wallet?.accounts?.[0] ?? null);
-          if (!ns._wsWallet) { ns._wsWallet = wallet; ns._wsAccount = wallet?.accounts?.[0] ?? null; }
+          _adoptWsWallet(wallet);
           return origReg(wallet);
         };
       }
@@ -207,7 +242,7 @@
         const list = typeof reg.get === 'function' ? reg.get() : (Array.isArray(reg) ? reg : []);
         for (const w of list) {
           if (w?.features?.['solana:signTransaction'] || w?.features?.['solana:signAndSendTransaction']) {
-            if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+            _adoptWsWallet(w);
             hookWsWallet(w, w.accounts?.[0] ?? null);
             found = true;
           }
@@ -220,7 +255,7 @@
       window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', { detail: { register(w) { d.push(w); } } }));
       for (const w of d) {
         if (w?.features?.['solana:signTransaction'] || w?.features?.['solana:signAndSendTransaction']) {
-          if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+          _adoptWsWallet(w);
           hookWsWallet(w, w.accounts?.[0] ?? null);
           found = true;
         }
@@ -241,7 +276,7 @@
         const list = typeof reg.get === 'function' ? reg.get() : (Array.isArray(reg) ? reg : []);
         for (const w of list) {
           if (w?.features?.['solana:signTransaction'] || w?.features?.['solana:signAndSendTransaction']) {
-            if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+            _adoptWsWallet(w);
             hookWsWallet(w, w.accounts?.[0] ?? null);
           }
         }
@@ -253,7 +288,7 @@
             const list = wallets.flat();
             for (const w of list) {
               if (!w?.features) continue;
-              if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+              _adoptWsWallet(w);
               hookWsWallet(w, w.accounts?.[0] ?? null);
             }
           });
@@ -267,7 +302,7 @@
           reg.push = function (...wallets) {
             for (const w of wallets) {
               if (!w?.features) continue;
-              if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+              _adoptWsWallet(w);
               hookWsWallet(w, w.accounts?.[0] ?? null);
             }
             return origPush(...wallets);
@@ -283,7 +318,7 @@
     window.addEventListener('wallet-standard:register-wallet', (e) => {
       const w = e.detail?.wallet ?? e.wallet;
       if (w?.features?.['solana:signTransaction'] || w?.features?.['solana:signAndSendTransaction']) {
-        if (!ns._wsWallet) { ns._wsWallet = w; ns._wsAccount = w.accounts?.[0] ?? null; }
+        _adoptWsWallet(w);
         hookWsWallet(w, w.accounts?.[0] ?? null);
       }
     });
@@ -298,7 +333,42 @@
     else scanAndWrapGlobalWallets();
   }
 
+  // ── Wallet switch watcher ───────────────────────────────────────
+  // Switching wallet in the DEX replaces window.solana outright and fires no event we can
+  // subscribe to, so the reference has to be polled. Without this the hook stays bound to
+  // the wallet the user left and the risk gate silently stops running.
+  function watchForWalletSwitch() {
+    let last = window.solana;
+    setInterval(() => {
+      try {
+        const cur = window.solana;
+        if (!cur || cur === last) return;
+        last = cur;
+        hookLegacyWallet(); // identity guard lets this through for the new adapter
+
+        const pk = cur?.publicKey?.toString?.();
+        if (!pk) return;
+        _savePubkey(pk);
+
+        // Re-point the Wallet Standard side at whichever registered wallet owns the new key.
+        const reg  = window.navigator?.wallets ?? window.__wallet_standard_wallets__;
+        if (!reg) return;
+        const list = typeof reg.get === 'function' ? reg.get() : (Array.isArray(reg) ? reg : []);
+        const match = list.find(w =>
+          (w?.features?.['solana:signAndSendTransaction'] || w?.features?.['solana:signTransaction'])
+          && w?.accounts?.some(a => a?.address === pk));
+        if (match) {
+          ns._wsWallet  = match;
+          ns._wsAccount = match.accounts.find(a => a?.address === pk) ?? match.accounts?.[0] ?? null;
+          hookWsWallet(match, ns._wsAccount);
+        }
+      } catch (_) {}
+    }, 1000);
+  }
+
   tryHook();
+
+  watchForWalletSwitch();
 
   // Subscribe to navigator.wallets registry — catches Jupiter Wallet and other
   // Wallet Standard wallets that register AFTER document_start via navigator.wallets.push().

@@ -52,6 +52,7 @@
   const ns = window.__zqlite = {
     // ── State ────────────────────────────────────────────────────────────────
     walletHooked:            false,
+    _hookedSolanaObj:        null,   // which window.solana object is hooked — lets us re-hook on a wallet switch
     walletPubkey:            null,
     lastOutputMint:          null,
     lastInputMint:           null,

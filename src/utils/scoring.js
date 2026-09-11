@@ -600,41 +600,59 @@ function _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint,
   }
 
   // ── 14. Serial deployer check ─────────────────────────────────────────────
-  // deployerData: { address: string, tokenCount: number } | null
+  // deployerData: { address: string, tokenCount: number|null, complete: boolean } | null
   // Tiers calibrated against real pump.fun bot behaviour:
   //   ≥50 = scripted factory (token every ~14h)
   //   ≥25 = near-automated (token every ~1.2d — physically implausible manually)
   //   ≥10 = systematic serial rugger (semi-manual with templates)
   //   ≥3  = repeat experimenter / early-stage bad actor
   if (deployerData?.address) {
-    const tc = deployerData.tokenCount ?? 0;
-    if (tc >= 50) {
+    const tc       = deployerData.tokenCount;
+    const complete = deployerData.complete !== false;
+    // An incomplete scan can only undercount, so a tier that is already hit stays valid.
+    // Only the "no history found" conclusion is unsafe to draw from partial data.
+    const n       = complete ? `${tc}` : `${tc}+`;
+    const partial = complete ? '' : ' Only part of this wallet\u2019s recent activity could be read, so the real figure may be higher.';
+
+    if (tc == null) {
+      factors.push({
+        name: 'Creator history: unavailable',
+        severity: 'MEDIUM',
+        detail: 'On-chain deployer lookup failed \u2014 this wallet\u2019s record of previous launches could not be checked. Neither confirmed nor ruled out; this is not an all-clear.',
+      });
+    } else if (tc >= 50) {
       score += 35;
       factors.push({
-        name: `Bot factory — ${tc} deploys in 30d`,
+        name: `Bot factory — ${n} deploys in 30d`,
         severity: 'CRITICAL',
-        detail: `Creator wallet launched ${tc} tokens in 30 days (~1 every 14h). This is a scripted bot factory. Near-certain rug.`,
+        detail: `Creator wallet launched ${n} tokens in 30 days (~1 every 14h). This is a scripted bot factory. Near-certain rug.` + partial,
       });
     } else if (tc >= 25) {
       score += 30;
       factors.push({
-        name: `Bot-created token — ${tc} deploys in 30d`,
+        name: `Bot-created token — ${n} deploys in 30d`,
         severity: 'CRITICAL',
-        detail: `Creator wallet launched ${tc} tokens in 30 days — physically implausible without automation. Automated rug pipeline.`,
+        detail: `Creator wallet launched ${n} tokens in 30 days — physically implausible without automation. Automated rug pipeline.` + partial,
       });
     } else if (tc >= 10) {
       score += 20;
       factors.push({
-        name: `Serial launcher — ${tc} tokens in 30d`,
+        name: `Serial launcher — ${n} tokens in 30d`,
         severity: 'HIGH',
-        detail: `Creator wallet has launched ${tc} tokens in 30 days. Systematic serial launches are a strong rug-pull indicator.`,
+        detail: `Creator wallet has launched ${n} tokens in 30 days. Systematic serial launches are a strong rug-pull indicator.` + partial,
       });
     } else if (tc >= 3) {
       score += 8;
       factors.push({
-        name: `Repeat creator — ${tc} tokens in 30d`,
+        name: `Repeat creator — ${n} tokens in 30d`,
         severity: 'MEDIUM',
-        detail: `Creator has launched ${tc} tokens in the last 30 days. May be an experimenter or early-stage bad actor — monitor carefully.`,
+        detail: `Creator has launched ${n} tokens in the last 30 days. May be an experimenter or early-stage bad actor — monitor carefully.` + partial,
+      });
+    } else if (!complete) {
+      factors.push({
+        name: 'Creator history: partial scan',
+        severity: 'MEDIUM',
+        detail: `Only part of this wallet\u2019s recent activity could be read. ${tc} previous launch${tc === 1 ? '' : 'es'} found so far, but the real figure may be higher \u2014 this is not an all-clear.`,
       });
     } else {
       factors.push({
@@ -794,32 +812,47 @@ async function fetchTokenScore(mint, symbol, { onBase } = {}) {
     // Deployer lookup — runs after mint data so we can use the real deployer address.
     // getRealDeployer + getDeployerTokenData are defined in extraction.js (MAIN world)
     // or stubbed to null in popup context where extraction.js is not loaded.
-    let deployerData = null;
-    let rugRateData  = null;
+    let deployerData   = null;
+    let rugRateData    = null;
+    let deployerFailed = false;
     try {
       if (typeof getRealDeployer === 'function') {
         const address = await getRealDeployer(mint);
         if (address) {
-          let tokenCount = 0;
+          let tokenCount = null;
           let mints      = [];
+          let complete   = false;
           if (typeof getDeployerTokenData === 'function') {
-            const td  = await getDeployerTokenData(address, 30);
+            const td   = await getDeployerTokenData(address, 30);
             tokenCount = td.tokenCount;
-            mints      = td.mints;
+            mints      = td.mints ?? [];
+            complete   = td.complete !== false;
           } else if (typeof getDeployerTokenCount === 'function') {
             tokenCount = await getDeployerTokenCount(address, 30);
+            complete   = tokenCount != null;
           }
-          deployerData = { address, tokenCount };
+          deployerData = { address, tokenCount, complete };
           // Rug-rate check: batch DexScreener call for a sample of deployer’s previous mints.
           // Runs after mint extraction since we need the addresses, not just the count.
           if (mints.length >= 3) {
             rugRateData = await _fetchDeployerRugRate(mints);
           }
+        } else {
+          deployerFailed = true;
         }
       }
-    } catch (_) { /* deployer lookup is best-effort */ }
+    } catch (_) { deployerFailed = true; }
 
     const result = _computeScore(mintInfo, holderData, rugCheck, dexData, geckoData, mint, deployerData, rugRateData, bundleLaunchData);
+    // Deployer address itself could not be resolved, so _computeScore pushed no creator row.
+    // Say so explicitly rather than letting the signal vanish from the list.
+    if (deployerFailed && !deployerData) {
+      result.factors.push({
+        name: 'Creator history: unavailable',
+        severity: 'MEDIUM',
+        detail: 'The wallet that created this token could not be identified on-chain, so its record of previous launches could not be checked. This is not an all-clear.',
+      });
+    }
     _setCached(mint, result);
     return result;
   } catch (err) {

@@ -12,10 +12,10 @@
  *   (accountKeys[0]) of that tx is always the deployer.
  *   Cost: up to 2 RPC calls (getSignaturesForAddress + getTransaction).
  *
- * getDeployerTokenCount(deployerAddress, windowDays?) → number
+ * getDeployerTokenCount(deployerAddress, windowDays?) → number | null
  *   Returns how many distinct mint addresses the deployer has funded in the
  *   last `windowDays` days (default 30). A high count is the primary serial-
- *   rugger signal.
+ *   rugger signal. null means the lookup failed — it does not mean zero.
  *   Method: getSignaturesForAddress on the deployer wallet, scan recent txns
  *   for InitializeMint instructions (programId = TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss624VQ5SDWKn
  *   or Token-2022). Caps at 200 signatures to stay within free RPC limits.
@@ -94,27 +94,37 @@ async function getRealDeployer(mint) {
  * plus the total count. Uses jsonParsed encoding to extract `initializeMint` instructions
  * directly — avoids the imprecise proxy-key heuristic used previously.
  *
- * Returns { tokenCount: number, mints: string[] }.
- * Falls back to tokenCount=0, mints=[] on any error.
+ * Returns { tokenCount: number|null, mints: string[], complete: boolean }.
+ *   tokenCount === null → the lookup failed. This is NOT the same as zero, and callers
+ *                         must not render it as "no previous tokens".
+ *   complete === false  → some transactions could not be read, so the count is a lower bound.
  */
 async function getDeployerTokenData(deployerAddress, windowDays = 30) {
-  if (!deployerAddress || typeof deployerAddress !== 'string') return { tokenCount: 0, mints: [] };
+  if (!deployerAddress || typeof deployerAddress !== 'string') {
+    return { tokenCount: null, mints: [], complete: false };
+  }
   try {
     const cutoff = Math.floor((Date.now() - windowDays * 24 * 3600 * 1000) / 1000);
     const resp = await rpcCall('getSignaturesForAddress', [deployerAddress, { limit: 200 }]);
     const recent = (resp?.result ?? []).filter(s => (s.blockTime ?? 0) >= cutoff);
-    if (!recent.length) return { tokenCount: 0, mints: [] };
+    if (!recent.length) return { tokenCount: 0, mints: [], complete: true };
 
     // Fetch up to 50 txns with jsonParsed so we can read initializeMint instruction info.
+    // Batches of 5: 50 simultaneous calls to a free public endpoint reliably rate-limit,
+    // and every throttled call silently removes a mint from the count.
     const toCheck = recent.slice(0, 50);
-    const txResps = await Promise.all(
-      toCheck.map(s =>
-        rpcCall('getTransaction', [
-          s.signature,
-          { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
-        ]).catch(() => null)
-      )
-    );
+    const txResps = [];
+    for (let i = 0; i < toCheck.length; i += 5) {
+      const batch = await Promise.all(
+        toCheck.slice(i, i + 5).map(s =>
+          rpcCall('getTransaction', [
+            s.signature,
+            { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
+          ]).catch(() => ({ _failed: true }))
+        )
+      );
+      txResps.push(...batch);
+    }
 
     const mints = [];
     const seen  = new Set();
@@ -140,15 +150,20 @@ async function getDeployerTokenData(deployerAddress, windowDays = 30) {
       }
     }
 
-    return { tokenCount: mints.length, mints };
+    // A transport failure means we could not scan that tx at all. A `result: null`
+    // (tx pruned from the endpoint's ledger) is an inherent limit of the method and
+    // is present in healthy scans too, so it does not mark the result incomplete.
+    const failed = txResps.filter(r => r?._failed).length;
+    return { tokenCount: mints.length, mints, complete: failed === 0 };
   } catch (_) {
-    return { tokenCount: 0, mints: [] };
+    return { tokenCount: null, mints: [], complete: false };
   }
 }
 
 /**
  * Counts how many tokens the deployer has launched in the last `windowDays` days.
  * Thin wrapper over getDeployerTokenData for backwards compatibility.
+ * Returns null when the lookup failed — callers must not treat that as zero.
  */
 async function getDeployerTokenCount(deployerAddress, windowDays = 30) {
   const { tokenCount } = await getDeployerTokenData(deployerAddress, windowDays);

@@ -372,7 +372,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           let quoteAccuracy = null, quotedOutUI = null;
           if (quotedRawOut != null && quotedRawOut > 0 && outputDecimals != null) {
             quotedOutUI = Number(quotedRawOut) / Math.pow(10, outputDecimals);
-            if (quotedOutUI > 0) quoteAccuracy = Math.min(100, (actualOut / quotedOutUI) * 100);
+            if (quotedOutUI > 0) {
+              const raw = (actualOut / quotedOutUI) * 100;
+              // A sub-0.01% shortfall would round to 100.00% and read as a perfect fill next to
+              // the Net vs quote row below it. 100% is reserved for an exact or better fill.
+              quoteAccuracy = raw >= 100 ? 100 : Math.min(99.99, raw);
+            }
           }
           _patchStorage(quoteAccuracy ?? -1, actualOut, quotedOutUI);
           return;

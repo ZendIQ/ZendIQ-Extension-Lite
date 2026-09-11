@@ -405,7 +405,12 @@
           let _quotedOutUI = null;
           if (quotedRawOut != null && quotedRawOut > 0 && outputDecimals != null) {
             _quotedOutUI = Number(quotedRawOut) / Math.pow(10, outputDecimals);
-            if (_quotedOutUI > 0) quoteAccuracy = Math.min(100, (actualOut / _quotedOutUI) * 100);
+            if (_quotedOutUI > 0) {
+              const _rawAcc = (actualOut / _quotedOutUI) * 100;
+              // A sub-0.01% shortfall would round to 100.00% and read as a perfect fill next to
+              // the Net vs quote row below it. 100% is reserved for an exact or better fill.
+              quoteAccuracy = _rawAcc >= 100 ? 100 : Math.min(99.99, _rawAcc);
+            }
           }
 
           window.postMessage({ type: 'ZQLITE_HISTORY_PATCH', signature, quoteAccuracy: quoteAccuracy ?? -1,

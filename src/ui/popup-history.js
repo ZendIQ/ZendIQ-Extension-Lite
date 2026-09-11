@@ -178,7 +178,10 @@ function _histEntry(h) {
     const _qBase = parseFloat(h.quotedOut ?? h.amountOut ?? 0);
     if (_qBase > 0) derivedAcc = Math.min(100, (parseFloat(h.actualOut) / _qBase) * 100);
   }
-  const _displayAcc = (_qAccNum != null && _qAccNum > 0) ? _qAccNum : derivedAcc;
+  const _rawDisplayAcc = (_qAccNum != null && _qAccNum > 0) ? _qAccNum : derivedAcc;
+  // Also floored here so entries stored before this rule still display honestly.
+  const _displayAcc = _rawDisplayAcc == null ? null
+    : (_rawDisplayAcc >= 100 ? 100 : Math.min(99.99, _rawDisplayAcc));
   const accColor = _displayAcc != null && _displayAcc >= 99 ? '#14F195' : '#FFB547';
 
   // Net vs quote row — shown whenever we have a displayable accuracy

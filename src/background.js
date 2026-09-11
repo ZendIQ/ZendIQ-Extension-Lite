@@ -329,17 +329,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           if (!tx?.meta) continue;
           const meta = tx.meta;
           let actualOut = null;
+          const post = meta.postTokenBalances ?? [];
+          const pre  = meta.preTokenBalances  ?? [];
           if (isSOL) {
             const m2   = tx.transaction?.message ?? {};
             const keys = m2.staticAccountKeys ?? m2.accountKeys ?? [];
             const idx  = keys.findIndex(k => (typeof k === 'string' ? k : k.pubkey) === walletPubkey);
             if (idx >= 0) {
-              const recv = (meta.postBalances[idx] ?? 0) - (meta.preBalances[idx] ?? 0) + (meta.fee ?? 0);
+              // On a gasless route a relayer is the fee payer, so its spend isn't the
+              // user's to credit back.
+              const _paidCosts = idx === 0;
+              // Rent left in an intermediate token account the route opened for the wallet
+              // is still the user's money — don't count it as a missed fill.
+              const _preIdx = new Set(pre.map(e => e.accountIndex));
+              let rentParked = 0;
+              if (_paidCosts) {
+                for (const e of post) {
+                  if (e.owner !== walletPubkey || _preIdx.has(e.accountIndex)) continue;
+                  const d = (meta.postBalances[e.accountIndex] ?? 0) - (meta.preBalances[e.accountIndex] ?? 0);
+                  if (d > 0) rentParked += d;
+                }
+              }
+              const recv = (meta.postBalances[idx] ?? 0) - (meta.preBalances[idx] ?? 0)
+                + (_paidCosts ? (meta.fee ?? 0) : 0) + rentParked;
               if (recv > 0) actualOut = recv / 1e9;
             }
           } else {
-            const post = meta.postTokenBalances ?? [];
-            const pre  = meta.preTokenBalances  ?? [];
             let postEntry = post.find(e => e.mint === outputMint && e.owner === walletPubkey);
             let preEntry  = pre.find( e => e.mint === outputMint && e.owner === walletPubkey);
             if (!postEntry) {

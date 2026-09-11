@@ -336,20 +336,38 @@
             return 0;
           };
 
+          const post = meta.postTokenBalances ?? [];
+          const pre  = meta.preTokenBalances  ?? [];
+
           if (isSOL) {
             // Find wallet's index in the account-key list
             const msg  = tx.transaction?.message ?? {};
             const keys = msg.staticAccountKeys ?? msg.accountKeys ?? [];
             const idx  = keys.findIndex(k => (typeof k === 'string' ? k : k.pubkey) === walletPubkey);
             if (idx >= 0) {
+              // Only credit costs back if this wallet actually bore them. On a gasless
+              // route a relayer is the fee payer (index 0), and crediting its spend to
+              // the user would inflate a bad fill to a clean 100%.
+              const _paidCosts = idx === 0;
+              // A multi-hop route opens an intermediate token account for the wallet and
+              // leaves rent sitting in it. Those lamports are still the user's — recoverable
+              // by closing the account — so charging them against the fill understates it.
+              const _preIdx = new Set(pre.map(e => e.accountIndex));
+              let rentParked = 0;
+              if (_paidCosts) {
+                for (const e of post) {
+                  if (e.owner !== walletPubkey || _preIdx.has(e.accountIndex)) continue;
+                  const d = (meta.postBalances[e.accountIndex] ?? 0) - (meta.preBalances[e.accountIndex] ?? 0);
+                  if (d > 0) rentParked += d;
+                }
+              }
               // Add fee back: wallet paid fee from balance, we want received SOL not net change
-              const receivedLamports = (meta.postBalances[idx] ?? 0) - (meta.preBalances[idx] ?? 0) + (meta.fee ?? 0);
+              const receivedLamports = (meta.postBalances[idx] ?? 0) - (meta.preBalances[idx] ?? 0)
+                + (_paidCosts ? (meta.fee ?? 0) : 0) + rentParked;
               if (receivedLamports > 0) actualOut = receivedLamports / 1e9;
             }
           } else {
             // SPL token — match by mint + owner in token balance snapshots
-            const post = meta.postTokenBalances ?? [];
-            const pre  = meta.preTokenBalances  ?? [];
 
             // Primary: owner field match (present on most RPCs)
             let postEntry = post.find(e => e.mint === outputMint && e.owner === walletPubkey);
@@ -531,6 +549,7 @@
   // prevents React from ever seeing the click. After the user confirms in the
   // overlay we re-fire btn.click() with the bypass flag set so it passes through.
   window.__zqlite_swap_bypass = false;
+  ns._clickGateClaim = null;
   document.addEventListener('click', async (e) => {
     if (window.__zqlite_swap_bypass) return;
     if (!ns.settings.enabled) return;
@@ -554,6 +573,10 @@
 
     e.stopImmediatePropagation();
     e.preventDefault();
+
+    // Drop any claim from an earlier swap that never reached the wallet, so it can
+    // never wave a later trade past the overlay. Re-set below only if the user proceeds.
+    ns._clickGateClaim = null;
 
     const mint = ns.lastOutputMint;
     // Validate cached score — reject results with unrecognised level or no factors
@@ -685,6 +708,10 @@
     // User confirmed — re-fire the click bypassing our interceptor.
     // The wallet hook (handleTransaction) will fire next and capture the signature
     // from the signed tx via _extractSigFromResult + _patchHistorySig.
+    // The bypass flag only covers the synchronous re-fire; the DEX builds the tx and
+    // calls the wallet seconds later, so leave a claim the wallet gate can recognise —
+    // without it that gate treats this as a fresh trade and logs the event twice.
+    ns._clickGateClaim = { mint, ts: Date.now() };
     window.__zqlite_swap_bypass = true;
     try { btn.click(); } finally { window.__zqlite_swap_bypass = false; }
   }, { capture: true });
@@ -702,6 +729,21 @@
     if (host.includes('pump.fun') && !ns.settings.sites.pumpfun)  return originalFn(tx, opts);
 
     const mint = ns.lastOutputMint;
+
+    // Claim left by the click gate for this same trade — it already scored the token,
+    // showed the overlay and logged the event. Sign through without repeating any of
+    // that, but still capture the signature: its history entry is waiting for one.
+    // Single-use and time-boxed so an abandoned tx build can't swallow a later trade.
+    const _claim = ns._clickGateClaim;
+    if (_claim && _claim.mint === mint && (Date.now() - _claim.ts) < 30000) {
+      ns._clickGateClaim = null;
+      const _res = await originalFn(tx, opts);
+      try {
+        const _sig = _extractSigFromResult(_res, tx, _method);
+        if (_sig) _patchHistorySig(_sig);
+      } catch (_) {}
+      return _res;
+    }
 
     // Validate cached score — reject stale results with unknown level or empty factors.
     const _KL2 = new Set(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']);

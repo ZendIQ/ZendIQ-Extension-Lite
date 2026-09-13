@@ -570,19 +570,17 @@ function refreshSecurityDisplay(newResult) {
 }
 
 // ── Public: restore tab badge colour on every popup open ──────────────────────
+// Display only. Scanning sends the wallet pubkey to public RPC nodes, so it must stay
+// user-initiated — it runs on Wallet tab open or Re-check, never on popup open.
 function initSecurityBadge() {
   chrome.storage.local.get(['secLastResult'], ({ secLastResult }) => {
-    if (secLastResult) {
-      _secResult = secLastResult;
-      const key = `secReviewed_${_secResult.walletType ?? 'unknown'}`;
-      chrome.storage.local.get([key], (data) => {
-        _reviewedAutoApprove = !!data[key];
-        _updateSecurityTabColor(); // seeds _lastKnownTabColor before scan starts
-        if (!_secChecking) runCheck(); // always try — runCheck() will detect pubkey via page injection
-      });
-    } else {
-      if (!_secChecking) runCheck(); // always try — runCheck() will detect pubkey via page injection
-    }
+    if (!secLastResult) return;
+    _secResult = secLastResult;
+    const key = `secReviewed_${_secResult.walletType ?? 'unknown'}`;
+    chrome.storage.local.get([key], (data) => {
+      _reviewedAutoApprove = !!data[key];
+      _updateSecurityTabColor();
+    });
   });
 }
 

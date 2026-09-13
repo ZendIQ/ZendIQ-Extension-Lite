@@ -45,10 +45,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialise scoring engine (for popup-side token scans in the Security tab)
   initScoring({ rpcCall, jsonFetch });
 
-  // Read wallet pubkey, then seed security badge colour + auto-trigger scan
+  // Read wallet pubkey, then seed security badge colour from the last stored scan
   chrome.storage.local.get(['zqlite_wallet_pubkey'], ({ zqlite_wallet_pubkey }) => {
     walletPubkey = zqlite_wallet_pubkey ?? null;
-    initSecurityBadge(); // colours the Wallet tab icon; triggers scan if wallet detected
+    initSecurityBadge(); // colours the Wallet tab icon only — does not scan
   });
 
   // ── Tab switching ─────────────────────────────────────────────────────────

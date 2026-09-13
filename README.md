@@ -51,9 +51,9 @@ It works on **Jupiter**, **Raydium**, and **Pump.fun** with no wallet connection
 The popup's **Wallet Security** tab scans your connected wallet for:
 
 - SPL Token and Token-2022 accounts with **unlimited delegations** — the most common attack vector used by drainer contracts
-- Matches against a list of **known drainer contract addresses**
 - Provides a **Security Score** (0–100) with per-finding detail and a direct link to [revoke.cash](https://revoke.cash) for any unlimited approvals
 
+The scan reports approval *scope*, not reputation — it cannot tell you whether a specific approved address is trustworthy.
 No transaction is required. The scan is read-only.
 
 ---
@@ -114,7 +114,7 @@ The 9 event types currently logged:
 | Private keys or seed phrases | Never accessed — not technically possible from a content script |
 | Transaction signatures | `chrome.storage.local` only |
 | Full swap history (amounts, token pairs, quote accuracy) | `chrome.storage.local` only |
-| Wallet security scan results (approvals, drainer matches) | `chrome.storage.local` only |
+| Wallet security scan results (approvals found) | `chrome.storage.local` only |
 | Full risk factor breakdown (all 16 signal details) | Computed and displayed locally; never uploaded |
 | RugCheck / DexScreener / GeckoTerminal API responses | Used locally for scoring; never forwarded |
 | Deployer address or on-chain transaction history | Used locally for scoring; never forwarded |

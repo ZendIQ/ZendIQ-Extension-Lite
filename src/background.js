@@ -209,30 +209,64 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const body = JSON.stringify({
       jsonrpc: '2.0', id: 1, method: msg.method, params: msg.params ?? [],
     });
-    const tryNext = (endpoints) => {
+    // A JSON-RPC rejection is a real answer, not a reachability problem. Reporting it as
+    // "All RPC endpoints failed" hid the actual cause behind the 403s from the hosts that
+    // do not serve this method, so it is kept and preferred over transport errors.
+    let _rpcError = null;
+    const _failures  = [];
+    const _throttled = [];
+    const tryNext = (endpoints, attempt = 0) => {
       if (!endpoints.length) {
-        sendResponse({ ok: false, error: 'All RPC endpoints failed' });
+        // Waiting on a throttled host is only worth it once every alternative has failed.
+        // getTokenAccountsByOwner has no alternative (see the endpoint list), but the
+        // token scorer's methods do, and it fires enough calls at once to throttle itself.
+        if (_throttled.length && attempt < 2) {
+          const _retry = _throttled.splice(0, _throttled.length);
+          setTimeout(() => tryNext(_retry, attempt + 1), 600 * (attempt + 1));
+          return;
+        }
+        sendResponse({
+          ok: false,
+          error: _rpcError ?? ('All RPC endpoints failed — ' + (_failures.join('; ') || 'unknown')),
+        });
         return;
       }
       const [url, ...rest] = endpoints;
+      const _host = url.replace(/^https?:\/\//, '');
       // 5-second per-endpoint timeout prevents a hanging endpoint from blocking
       // the fallback chain and causing the whole 20s bridge timeout to fire.
       const ac = new AbortController();
       const t  = setTimeout(() => ac.abort(), 5000);
       fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: ac.signal })
-        .then(r => { clearTimeout(t); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(r => {
+          clearTimeout(t);
+          // Throttling is transient, so this host is set aside rather than written off,
+          // but the remaining endpoints are tried first so a self-inflicted burst 429
+          // costs a fallback rather than seconds of backoff.
+          if (r.status === 429 || r.status === 503) {
+            _failures.push(_host + ': HTTP ' + r.status);
+            _throttled.push(url);
+            tryNext(rest, attempt);
+            return null;
+          }
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
         .then(data => {
-          // A JSON-RPC error arrives in the body of a 200 response. Reporting it as
-          // ok:true leaves callers reading `.result` as undefined, so a rejection
-          // (e.g. -32015 on a v1 tx) is indistinguishable from an empty result.
+          if (data === null) return; // fallback already dispatched above
+
           if (data?.error) {
-            if (rest.length) { tryNext(rest); return; }
-            sendResponse({ ok: false, error: data.error.message ?? ('RPC error ' + data.error.code) });
+            _rpcError = data.error.message ?? ('RPC error ' + data.error.code);
+            tryNext(rest, attempt);
             return;
           }
           sendResponse({ ok: true, data });
         })
-        .catch(() => { clearTimeout(t); tryNext(rest); });
+        .catch(e => {
+          clearTimeout(t);
+          _failures.push(_host + ': ' + (e?.message || 'error'));
+          tryNext(rest, attempt);
+        });
     };
     tryNext(RPC_ENDPOINTS);
     return true;

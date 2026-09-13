@@ -33,15 +33,20 @@ const _SPL_TOKEN_22 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb';
 // v1 (SIMD-0296) activates at epoch 1035, 2026-09-15.
 const MAX_TX_VERSION = 1;
 
-// rpcCall is provided by page-config.js via window.__zqlite.rpcCall
-function rpcCall(method, params) {
-  return window.__zqlite.rpcCall(method, params);
+// Loaded in two contexts: the page, which exposes the bridge on window.__zqlite, and the
+// popup, which loads rpc.js. Declaring a global `rpcCall` here overwrote rpc.js's copy in
+// the popup, where __zqlite does not exist, so every popup RPC call failed on undefined.
+function _extractionRpc(method, params) {
+  const viaPage = window.__zqlite?.rpcCall;
+  if (viaPage) return viaPage(method, params);
+  if (typeof rpcCall === 'function') return rpcCall(method, params);
+  return Promise.reject(new Error('no RPC transport available'));
 }
 
 async function getCreatorFromMint(mint) {
   if (!mint || typeof mint !== 'string') return null;
   try {
-    const resp = await rpcCall('getAccountInfo', [mint, { encoding: 'jsonParsed' }]);
+    const resp = await _extractionRpc('getAccountInfo', [mint, { encoding: 'jsonParsed' }]);
     const info = resp?.result?.value?.data?.parsed?.info;
     if (!info) return null;
     // Return mint authority (present = still active; null = burned).
@@ -65,7 +70,7 @@ async function getRealDeployer(mint) {
     // Walk backwards until we run out of pages (max 3 pages × 1000 = 3000 sigs)
     for (let page = 0; page < 3; page++) {
       const params = [mint, { limit: 1000, ...(before ? { before } : {}) }];
-      const resp = await rpcCall('getSignaturesForAddress', params);
+      const resp = await _extractionRpc('getSignaturesForAddress', params);
       const sigs = resp?.result ?? [];
       if (!sigs.length) break;
       oldest = sigs[sigs.length - 1].signature;
@@ -75,7 +80,7 @@ async function getRealDeployer(mint) {
     if (!oldest) return await getCreatorFromMint(mint);
 
     // Fetch that oldest transaction — fee-payer is accountKeys[0]
-    const txResp = await rpcCall('getTransaction', [
+    const txResp = await _extractionRpc('getTransaction', [
       oldest,
       { encoding: 'json', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
     ]);
@@ -105,7 +110,7 @@ async function getDeployerTokenData(deployerAddress, windowDays = 30) {
   }
   try {
     const cutoff = Math.floor((Date.now() - windowDays * 24 * 3600 * 1000) / 1000);
-    const resp = await rpcCall('getSignaturesForAddress', [deployerAddress, { limit: 200 }]);
+    const resp = await _extractionRpc('getSignaturesForAddress', [deployerAddress, { limit: 200 }]);
     const recent = (resp?.result ?? []).filter(s => (s.blockTime ?? 0) >= cutoff);
     if (!recent.length) return { tokenCount: 0, mints: [], complete: true };
 
@@ -117,7 +122,7 @@ async function getDeployerTokenData(deployerAddress, windowDays = 30) {
     for (let i = 0; i < toCheck.length; i += 5) {
       const batch = await Promise.all(
         toCheck.slice(i, i + 5).map(s =>
-          rpcCall('getTransaction', [
+          _extractionRpc('getTransaction', [
             s.signature,
             { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: MAX_TX_VERSION },
           ]).catch(() => ({ _failed: true }))

@@ -9,21 +9,6 @@
   const ns = window.__zqlite;
   if (!ns) return;
 
-  const KNOWN_DRAIN_CONTRACTS = new Set([
-    '3CCLniuEGnMBWbE3FQiRQEhDGSRUnfFBWX9eV8GiJgJ2',
-    'BVVdBbGmtMqDhFNpRKCBMCDmqD6a8NNvjFE6czHGJT5E',
-    'GcF8pREjdFbXr4h4sMXNNNyicP2A9QN6LWsPpKMVADep',
-    '9DtmUXVZhEFPGq6CQRS4RBfMkNDqVwVumtBXo3HLPF7w',
-    'FGbGTPJLsLEBJW4JnK8gNqUQRiDkdQAaTfqG6G5PkR7o',
-    '5sJqX3GhmdmfJC4uqoT3ZGagKByVSYo9CqTvWuLK8aCj',
-    '8W8XSFxXc4RAUXCq8AyjC2k7YZ7Q6zY3GAnG2RqAqbdB',
-    'AXEfAFqk4uqzC6Gy6SzZCfEJz8RKf8HnHqE8uoXYPyNZ',
-    'HN7cABqLq46Es1jh92dQQisAq662SmxELLLsRUe9efou',
-    '4xQwteRzMPKJM1FS1H4fxVcLaGJy8W8PvbVTEm3XXTXB',
-    '6Y5ynC3v6F8i5PHN8SfJg9JbNrjxqBmKfQdqZ7dBDVy4',
-    'TokenkegDrainXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX',
-  ]);
-
   const UNLIMITED = 1_000_000_000_000_000;
 
   // ── detectWalletType ─────────────────────────────────────────────────────
@@ -58,7 +43,7 @@
       ns.walletSecurityResult = {
         score: null, error: 'Wallet not connected',
         findings: [{ severity: 'WARN', text: 'Connect your wallet to run a security check', detail: '' }],
-        checkedAt: null, pubkey: null, unlimitedApprovals: [], badContracts: [], walletType: detectWalletType(),
+        checkedAt: null, pubkey: null, unlimitedApprovals: [], walletType: detectWalletType(),
       };
       return;
     }
@@ -68,7 +53,7 @@
     ns.walletSecurityResult = null;
 
     const findings = [];
-    let score = 100, unlimitedList = [], knownBadList = [], totalAccounts = 0;
+    let score = 100, unlimitedList = [], totalAccounts = 0;
 
     try {
       const PROGRAMS = [
@@ -77,6 +62,7 @@
       ];
       let allAccounts = [];
       let programsOk  = 0;
+      const rpcErrors = [];
       for (const programId of PROGRAMS) {
         try {
           const resp  = await ns.rpcCall('getTokenAccountsByOwner', [_pubkey, { programId }, { encoding: 'jsonParsed' }]);
@@ -84,11 +70,16 @@
           if (!Array.isArray(value)) throw new Error('malformed RPC response');
           allAccounts = allAccounts.concat(value);
           programsOk++;
-        } catch (_) { /* tallied below — a partial scan must not report as a complete one */ }
+        } catch (e) {
+          // Discarding this made a reachability problem indistinguishable from a rejected request.
+          rpcErrors.push(e?.message || String(e));
+        }
       }
+      if (rpcErrors.length) console.warn('[ZendIQ Lite] approval scan RPC errors:', rpcErrors);
       // Nothing was actually read, so there is no basis for a verdict. Scoring 100 here
       // would read as "no approvals found" when it really means "not checked".
-      if (programsOk === 0) throw new Error('Could not reach Solana RPC — approvals were not checked');
+      // The caller appends the "approvals were not checked" caveat, so it is not repeated here.
+      if (programsOk === 0) throw new Error('Could not reach Solana RPC: ' + (rpcErrors[0] ?? 'unknown error'));
       const partialScan = programsOk < PROGRAMS.length;
       totalAccounts = allAccounts.length;
 
@@ -96,22 +87,15 @@
         const info = acct?.account?.data?.parsed?.info;
         if (!info?.delegate) continue;
         const raw = Number(info.delegatedAmount?.amount ?? 0);
-        if (raw < UNLIMITED) continue;
         const entry = { delegate: info.delegate, mint: info.mint ?? 'Unknown', delegatedRaw: raw };
-        unlimitedList.push(entry);
-        if (KNOWN_DRAIN_CONTRACTS.has(info.delegate)) knownBadList.push(entry);
+        if (raw >= UNLIMITED) unlimitedList.push(entry);
       }
 
-      const unknownUnlim = unlimitedList.length - knownBadList.length;
-      score -= Math.min(knownBadList.length * 30, 60);
-      score -= Math.min(unknownUnlim * 20, 40);
+      score -= Math.min(unlimitedList.length * 20, 40);
       score  = Math.max(0, score);
 
-      if (knownBadList.length > 0) {
-        findings.push({ severity: 'CRITICAL', text: `${knownBadList.length} known drainer contract${knownBadList.length > 1 ? 's' : ''} has token approval`, detail: 'Revoke immediately — these contracts are confirmed wallet drainers' });
-      }
-      if (unknownUnlim > 0) {
-        findings.push({ severity: 'HIGH', text: `${unknownUnlim} unlimited token approval${unknownUnlim > 1 ? 's' : ''} active`, detail: "Review and revoke any you don't recognise at revoke.cash" });
+      if (unlimitedList.length > 0) {
+        findings.push({ severity: 'HIGH', text: `${unlimitedList.length} unlimited token approval${unlimitedList.length > 1 ? 's' : ''} active`, detail: "Review and revoke any you don't recognise at revoke.cash" });
       }
 
       const walletType = detectWalletType();
@@ -131,12 +115,12 @@
       if (partialScan) {
         findings.unshift({ severity: 'WARN', text: 'Approval scan incomplete', detail: 'One token program could not be reached — re-scan to finish checking.' });
       } else if (!findings.some(f => f.severity === 'CRITICAL' || f.severity === 'HIGH')) {
-        findings.unshift({ severity: 'OK', text: `${totalAccounts} accounts scanned — no harmful approvals found`, detail: 'Approval scan complete' });
+        findings.unshift({ severity: 'OK', text: `${totalAccounts} accounts scanned — no unlimited approvals found`, detail: 'Approval scan complete' });
       }
 
-      ns.walletSecurityResult = { score, autoApproveDeduction, checkedAt: Date.now(), pubkey: _pubkey, walletType, totalAccounts, unlimitedApprovals: unlimitedList, badContracts: knownBadList, findings };
+      ns.walletSecurityResult = { score, autoApproveDeduction, checkedAt: Date.now(), pubkey: _pubkey, walletType, totalAccounts, unlimitedApprovals: unlimitedList, findings };
     } catch (e) {
-      ns.walletSecurityResult = { score: null, checkedAt: Date.now(), pubkey: _pubkey, walletType: detectWalletType(), totalAccounts, unlimitedApprovals: [], badContracts: [], findings: [{ severity: 'WARN', text: 'Security check could not run', detail: (e.message?.slice(0, 120) ?? 'Unknown error') + ' — your approvals were not checked, so this is not an all-clear.' }], error: e.message };
+      ns.walletSecurityResult = { score: null, checkedAt: Date.now(), pubkey: _pubkey, walletType: detectWalletType(), totalAccounts, unlimitedApprovals: [], findings: [{ severity: 'WARN', text: 'Security check could not run', detail: (e.message?.slice(0, 120) ?? 'Unknown error') + ' — your approvals were not checked, so this is not an all-clear.' }], error: e.message };
     } finally {
       ns.walletSecurityChecking = false;
       const r = ns.walletSecurityResult;

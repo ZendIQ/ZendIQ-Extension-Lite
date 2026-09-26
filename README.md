@@ -3,6 +3,8 @@
 > **Free Solana swap guardian.** Analyses token risk and warns you before you sign — on Jupiter, Raydium, and Pump.fun.
 >
 > 🌐 [zendiq.ai](https://zendiq.ai) · [Chrome Web Store](https://chromewebstore.google.com/detail/piacdmhfdpnddopdojdfkjbbbcpgpblf)
+>
+> 🤖 **Building an AI agent?** The same risk engine is available as the [ZendIQ Agent API](https://zendiq.ai/agents/): token screening, swap verdicts and unsigned optimised transactions, paid per call over x402 or used as MCP tools. [llms.txt](https://zendiq.ai/llms.txt) · [OpenAPI](https://zendiq.ai/openapi.json) · [GitHub](https://github.com/ZendIQ/ZendIQ-Agent-API)
 
 ---
 

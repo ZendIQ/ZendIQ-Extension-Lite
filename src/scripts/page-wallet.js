@@ -109,50 +109,30 @@
     }
   }
 
+  // Wallet Standard wallets commonly expose `features` as a getter that builds a new object
+  // on every access (Jupiter Wallet does), so patching one returned object hooks nothing.
+  // Wrap the getter itself so every features object the DEX reads comes back hooked.
+  function _hookFeaturesGetter(w) {
+    try {
+      let owner = w;
+      while (owner && !Object.prototype.hasOwnProperty.call(owner, 'features')) owner = Object.getPrototypeOf(owner);
+      const desc = owner && Object.getOwnPropertyDescriptor(owner, 'features');
+      if (!desc?.get || desc.get.__zqlite_wrapped) return;
+      const origGet = desc.get;
+      const get = function () {
+        const f = origGet.call(this);
+        _wrapWsFeatures(f);
+        return f;
+      };
+      get.__zqlite_wrapped = true;
+      Object.defineProperty(owner, 'features', { ...desc, get });
+    } catch (_) {}
+  }
+
   function hookWsWallet(w, account) {
     if (!w?.features) return;
-
-    // Use Object.defineProperty + getter to match Pro's approach.
-    // Direct property assignment (feat[method] = fn) fails silently when:
-    //   a) the property is non-writable, or
-    //   b) Jupiter's framework cached the original function reference before the hook ran.
-    // A getter is evaluated on every property read, so it can't be bypassed by caching.
-
-    try {
-      const feat = w.features['solana:signAndSendTransaction'];
-      if (feat?.signAndSendTransaction && !feat.__zqlite_hooked_sast) {
-        const origFn = feat.signAndSendTransaction.bind(feat);
-        feat.__zqlite_hooked_sast = true;
-        Object.defineProperty(feat, 'signAndSendTransaction', {
-          get() {
-            return (...args) => {
-              const callOrig = () => origFn(...args); // preserve all WS args
-              return (ns.handleTransaction?.(args[0], {}, callOrig, 'signAndSendTransaction')
-                ?? callOrig());
-            };
-          },
-          configurable: true,
-        });
-      }
-    } catch (_) {}
-
-    try {
-      const feat = w.features['solana:signTransaction'];
-      if (feat?.signTransaction && !feat.__zqlite_hooked_st) {
-        const origFn = feat.signTransaction.bind(feat);
-        feat.__zqlite_hooked_st = true;
-        Object.defineProperty(feat, 'signTransaction', {
-          get() {
-            return (...args) => {
-              const callOrig = () => origFn(...args);
-              return (ns.handleTransaction?.(args[0], {}, callOrig, 'signTransaction')
-                ?? callOrig());
-            };
-          },
-          configurable: true,
-        });
-      }
-    } catch (_) {}
+    _hookFeaturesGetter(w);
+    _wrapWsFeatures(w.features);
 
     if (account?.address) {
       _savePubkey(account.address);
@@ -176,6 +156,45 @@
           ns._wsAccount = null;
         }
       });
+    } catch (_) {}
+  }
+
+  // Getter-based (not assigned) so a DEX that cached the feature object still reads the hook.
+  function _wrapWsFeatures(features) {
+    try {
+      const feat = features?.['solana:signAndSendTransaction'];
+      if (feat?.signAndSendTransaction && !feat.__zqlite_hooked_sast) {
+        const origFn = feat.signAndSendTransaction.bind(feat);
+        feat.__zqlite_hooked_sast = true;
+        Object.defineProperty(feat, 'signAndSendTransaction', {
+          get() {
+            return (...args) => {
+              const callOrig = () => origFn(...args); // preserve all WS args
+              return (ns.handleTransaction?.(args[0], {}, callOrig, 'signAndSendTransaction')
+                ?? callOrig());
+            };
+          },
+          configurable: true,
+        });
+      }
+    } catch (_) {}
+
+    try {
+      const feat = features?.['solana:signTransaction'];
+      if (feat?.signTransaction && !feat.__zqlite_hooked_st) {
+        const origFn = feat.signTransaction.bind(feat);
+        feat.__zqlite_hooked_st = true;
+        Object.defineProperty(feat, 'signTransaction', {
+          get() {
+            return (...args) => {
+              const callOrig = () => origFn(...args);
+              return (ns.handleTransaction?.(args[0], {}, callOrig, 'signTransaction')
+                ?? callOrig());
+            };
+          },
+          configurable: true,
+        });
+      }
     } catch (_) {}
   }
 
